@@ -70,8 +70,6 @@ source "drivers/staging/rts_pstor/Kconfig"
 
 source "drivers/staging/frontier/Kconfig"
 
-source "drivers/staging/android/Kconfig"
-
 source "drivers/staging/pohmelfs/Kconfig"
 
 source "drivers/staging/phison/Kconfig"
@@ -104,8 +102,6 @@ source "drivers/staging/iio/Kconfig"
 
 source "drivers/staging/cs5535_gpio/Kconfig"
 
-source "drivers/staging/snappy/Kconfig"
-
 source "drivers/staging/zram/Kconfig"
 
 source "drivers/staging/zcache/Kconfig"
@@ -123,6 +119,8 @@ source "drivers/staging/crystalhd/Kconfig"
 source "drivers/staging/cxt1e1/Kconfig"
 
 source "drivers/staging/xgifb/Kconfig"
+
+source "drivers/staging/msm/Kconfig"
 
 source "drivers/staging/lirc/Kconfig"
 

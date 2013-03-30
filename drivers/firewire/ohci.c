@@ -286,6 +286,9 @@ static const struct {
 	{PCI_VENDOR_ID_ATT, PCI_DEVICE_ID_AGERE_FW643, 6,
 		QUIRK_NO_MSI},
 
+	{PCI_VENDOR_ID_CREATIVE, PCI_DEVICE_ID_CREATIVE_SB1394, PCI_ANY_ID,
+		QUIRK_RESET_PACKET},
+
 	{PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB38X_FW, PCI_ANY_ID,
 		QUIRK_NO_MSI},
 
@@ -296,7 +299,7 @@ static const struct {
 		QUIRK_NO_MSI},
 
 	{PCI_VENDOR_ID_RICOH, PCI_ANY_ID, PCI_ANY_ID,
-		QUIRK_CYCLE_TIMER},
+		QUIRK_CYCLE_TIMER | QUIRK_NO_MSI},
 
 	{PCI_VENDOR_ID_TI, PCI_DEVICE_ID_TI_TSB12LV22, PCI_ANY_ID,
 		QUIRK_CYCLE_TIMER | QUIRK_RESET_PACKET | QUIRK_NO_1394A},
@@ -2555,15 +2558,14 @@ static int handle_ir_buffer_fill(struct context *context,
 	struct iso_context *ctx =
 		container_of(context, struct iso_context, context);
 
-	if (!last->transfer_status)
+	if (last->res_count != 0)
 		/* Descriptor(s) not done yet, stop iteration */
 		return 0;
 
 	if (le16_to_cpu(last->control) & DESCRIPTOR_IRQ_ALWAYS)
 		ctx->base.callback.mc(&ctx->base,
 				      le32_to_cpu(last->data_address) +
-				      le16_to_cpu(last->req_count) -
-				      le16_to_cpu(last->res_count),
+				      le16_to_cpu(last->req_count),
 				      ctx->base.callback_data);
 
 	return 1;

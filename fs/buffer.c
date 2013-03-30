@@ -1079,6 +1079,7 @@ grow_buffers(struct block_device *bdev, sector_t block, int size)
 		return -EIO;
 	}
 
+	/* Create a page with the proper size buffers.. */
 	return grow_dev_page(bdev, block, index, size, sizebits);
 }
 
@@ -1098,7 +1099,7 @@ __getblk_slow(struct block_device *bdev, sector_t block, int size)
 	}
 
 	for (;;) {
-		struct buffer_head * bh;
+		struct buffer_head *bh;
 		int ret;
 
 		bh = __find_get_block(bdev, block, size);

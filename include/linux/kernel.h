@@ -127,18 +127,11 @@ struct completion;
 struct pt_regs;
 struct user;
 
-/* cannot bring in linux/rcupdate.h at this point */
-#ifdef CONFIG_JRCU
-extern void rcu_note_might_resched(void);
-#else
-#define rcu_note_might_resched()
-#endif /*JRCU */
-
 #ifdef CONFIG_PREEMPT_VOLUNTARY
 extern int _cond_resched(void);
-# define might_resched() do { _cond_resched(); rcu_note_might_resched(); } while (0)
+# define might_resched() _cond_resched()
 #else
-# define might_resched() do { rcu_note_might_resched(); } while (0)
+# define might_resched() do { } while (0)
 #endif
 
 #ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
@@ -308,8 +301,6 @@ extern long long simple_strtoll(const char *,char **,unsigned int);
 #define strict_strtoull	kstrtoull
 #define strict_strtoll	kstrtoll
 
-extern int num_to_str(char *buf, int size, unsigned long long num);
-
 extern int sprintf(char * buf, const char * fmt, ...)
 	__attribute__ ((format (printf, 2, 3)));
 extern int vsprintf(char *buf, const char *, va_list)
@@ -398,16 +389,6 @@ static inline char *pack_hex_byte(char *buf, u8 byte)
 extern int hex_to_bin(char ch);
 extern void hex2bin(u8 *dst, const char *src, size_t count);
 
-#define pr_aud_fmt(fmt) "[AUD] " KBUILD_MODNAME ": " fmt
-#define pr_aud_fmt1(fmt) "[AUD]" fmt
-#define pr_aud_err(fmt, ...) \
-			printk(KERN_ERR pr_aud_fmt(fmt), ##__VA_ARGS__)
-#define pr_aud_err1(fmt, ...) \
-			printk(KERN_ERR pr_aud_fmt1(fmt), ##__VA_ARGS__)
-#define pr_aud_info(fmt, ...) \
-			printk(KERN_INFO pr_aud_fmt(fmt), ##__VA_ARGS__)
-#define pr_aud_info1(fmt, ...) \
-			printk(KERN_INFO pr_aud_fmt1(fmt), ##__VA_ARGS__)
 /*
  * General tracing related utility functions - trace_printk(),
  * tracing_on/tracing_off and tracing_start()/tracing_stop
@@ -767,8 +748,5 @@ extern int __build_bug_on_failed;
 #ifdef CONFIG_FTRACE_MCOUNT_RECORD
 # define REBUILD_DUE_TO_FTRACE_MCOUNT_RECORD
 #endif
-
-/* To identify board information in panic logs, set this */
-extern char *mach_panic_string;
 
 #endif

@@ -286,8 +286,8 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 		} else
 			retval = -ENOMEM;
 	}
-	mutex_unlock(&uevent_sock_mutex);
 #endif
+	mutex_unlock(&uevent_sock_mutex);
 
 	/* call uevent_helper, usually only enabled during early boot */
 	if (uevent_helper[0] && !kobj_usermode_filter(kobj)) {

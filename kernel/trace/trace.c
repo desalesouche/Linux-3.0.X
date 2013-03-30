@@ -3718,8 +3718,6 @@ tracing_buffers_read(struct file *filp, char __user *ubuf,
 
 	info->read = 0;
 
-	info->read = 0;
-
 read:
 	size = PAGE_SIZE - info->read;
 	if (size > count)

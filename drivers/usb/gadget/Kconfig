@@ -936,14 +936,6 @@ config USB_G_PRINTER
 	  For more information, see Documentation/usb/gadget_printer.txt
 	  which includes sample code for accessing the device file.
 
-config USB_G_ANDROID
-	boolean "Android Gadget"
-	depends on SWITCH
-	help
-	  The Android gadget driver supports multiple USB functions.
-	  The functions can be configured via a board file and may be
-	  enabled and disabled dynamically.
-
 config USB_CDC_COMPOSITE
 	tristate "CDC Composite Device (Ethernet and ACM)"
 	depends on NET
@@ -1066,10 +1058,3 @@ config USB_G_WEBCAM
 endchoice
 
 endif # USB_GADGET
-
-config USB_HTC_SWITCH_STUB
-	depends on USB_G_ANDROID
-	bool "USB HTC function switch stub"
-	default n
-	help
-	  Provide dummy HTC USB function switch sysfs device for libhtc_ril.

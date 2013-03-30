@@ -1948,11 +1948,6 @@ err_detach:
 	bond_detach_slave(bond, new_slave);
 	write_unlock_bh(&bond->lock);
 
-err_detach:
-	write_lock_bh(&bond->lock);
-	bond_detach_slave(bond, new_slave);
-	write_unlock_bh(&bond->lock);
-
 err_close:
 	dev_close(slave_dev);
 

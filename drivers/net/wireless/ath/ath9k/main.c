@@ -1840,9 +1840,6 @@ static void ath9k_sta_notify(struct ieee80211_hw *hw,
 	if (!(sc->sc_flags & SC_OP_TXAGGR))
 		return;
 
-	if (!(sc->sc_flags & SC_OP_TXAGGR))
-		return;
-
 	switch (cmd) {
 	case STA_NOTIFY_SLEEP:
 		an->sleeping = true;
