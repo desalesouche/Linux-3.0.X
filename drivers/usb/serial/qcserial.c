@@ -13,7 +13,6 @@
 
 #include <linux/tty.h>
 #include <linux/tty_flip.h>
-#include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
 #include <linux/slab.h>
@@ -22,7 +21,7 @@
 #define DRIVER_AUTHOR "Qualcomm Inc"
 #define DRIVER_DESC "Qualcomm USB Serial driver"
 
-static bool debug;
+static int debug;
 
 #define DEVICE_G1K(v, p) \
 	USB_DEVICE(v, p), .driver_info = 1
@@ -55,6 +54,7 @@ static const struct usb_device_id id_table[] = {
 	{DEVICE_G1K(0x05c6, 0x9221)},	/* Generic Gobi QDL device */
 	{DEVICE_G1K(0x05c6, 0x9231)},	/* Generic Gobi QDL device */
 	{DEVICE_G1K(0x1f45, 0x0001)},	/* Unknown Gobi QDL device */
+	{DEVICE_G1K(0x1bc7, 0x900e)},	/* Telit Gobi QDL device */
 
 	/* Gobi 2000 devices */
 	{USB_DEVICE(0x1410, 0xa010)},	/* Novatel Gobi 2000 QDL device */
@@ -151,6 +151,8 @@ static int qcprobe(struct usb_serial *serial, const struct usb_device_id *id)
 		return -ENOMEM;
 
 	spin_lock_init(&data->susp_lock);
+
+	usb_enable_autosuspend(serial->dev);
 
 	switch (nintf) {
 	case 1:
@@ -271,6 +273,7 @@ static struct usb_serial_driver qcdevice = {
 	},
 	.description         = "Qualcomm USB modem",
 	.id_table            = id_table,
+	.usb_driver          = &qcdriver,
 	.num_ports           = 1,
 	.probe               = qcprobe,
 	.open		     = usb_wwan_open,
@@ -287,11 +290,31 @@ static struct usb_serial_driver qcdevice = {
 #endif
 };
 
-static struct usb_serial_driver * const serial_drivers[] = {
-	&qcdevice, NULL
-};
+static int __init qcinit(void)
+{
+	int retval;
 
-module_usb_serial_driver(qcdriver, serial_drivers);
+	retval = usb_serial_register(&qcdevice);
+	if (retval)
+		return retval;
+
+	retval = usb_register(&qcdriver);
+	if (retval) {
+		usb_serial_deregister(&qcdevice);
+		return retval;
+	}
+
+	return 0;
+}
+
+static void __exit qcexit(void)
+{
+	usb_deregister(&qcdriver);
+	usb_serial_deregister(&qcdevice);
+}
+
+module_init(qcinit);
+module_exit(qcexit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

@@ -1,3 +1,32 @@
+/* dummy.c: a dummy net driver
+
+	The purpose of this driver is to provide a device to point a
+	route through, but not to actually transmit packets.
+
+	Why?  If you have a machine whose only connection is an occasional
+	PPP/SLIP/PLIP link, you can only connect to your own hostname
+	when the link is up.  Otherwise you have to use localhost.
+	This isn't very consistent.
+
+	One solution is to set up a dummy link using PPP/SLIP/PLIP,
+	but this seems (to me) too much overhead for too little gain.
+	This driver provides a small alternative. Thus you can do
+
+	[when not running slip]
+		ifconfig dummy slip.addr.ess.here up
+	[to go to slip]
+		ifconfig dummy down
+		dip whatever
+
+	This was written by looking at Donald Becker's skeleton driver
+	and the loopback driver.  I then threw away anything that didn't
+	apply!	Thanks to Alan Cox for the key clue on what to do with
+	misguided packets.
+
+			Nick Holloway, 27th May 1994
+	[I tweaked this explanation a little but that's all]
+			Alan Cox, 30th May 1994
+*/
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -8,6 +37,7 @@
 #include <linux/rtnetlink.h>
 #include <net/rtnetlink.h>
 #include <linux/u64_stats_sync.h>
+#include <linux/sched.h>
 
 static int numdummies = 1;
 
@@ -18,11 +48,11 @@ static int dummy_set_address(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(sa->sa_data))
 		return -EADDRNOTAVAIL;
 
-	dev->addr_assign_type &= ~NET_ADDR_RANDOM;
 	memcpy(dev->dev_addr, sa->sa_data, ETH_ALEN);
 	return 0;
 }
 
+/* fake multicast ability */
 static void set_multicast_list(struct net_device *dev)
 {
 }
@@ -87,7 +117,7 @@ static const struct net_device_ops dummy_netdev_ops = {
 	.ndo_uninit		= dummy_dev_uninit,
 	.ndo_start_xmit		= dummy_xmit,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_rx_mode	= set_multicast_list,
+	.ndo_set_multicast_list = set_multicast_list,
 	.ndo_set_mac_address	= dummy_set_address,
 	.ndo_get_stats64	= dummy_get_stats64,
 };
@@ -96,17 +126,17 @@ static void dummy_setup(struct net_device *dev)
 {
 	ether_setup(dev);
 
-	
+	/* Initialize the device structure. */
 	dev->netdev_ops = &dummy_netdev_ops;
 	dev->destructor = free_netdev;
 
-	
+	/* Fill in device structure with ethernet-generic values. */
 	dev->tx_queue_len = 0;
 	dev->flags |= IFF_NOARP;
 	dev->flags &= ~IFF_MULTICAST;
 	dev->features	|= NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_TSO;
-	dev->features	|= NETIF_F_HW_CSUM | NETIF_F_HIGHDMA | NETIF_F_LLTX;
-	eth_hw_addr_random(dev);
+	dev->features	|= NETIF_F_NO_CSUM | NETIF_F_HIGHDMA | NETIF_F_LLTX;
+	random_ether_addr(dev->dev_addr);
 }
 
 static int dummy_validate(struct nlattr *tb[], struct nlattr *data[])
@@ -126,6 +156,7 @@ static struct rtnl_link_ops dummy_link_ops __read_mostly = {
 	.validate	= dummy_validate,
 };
 
+/* Number of dummy devices to be set up by this module. */
 module_param(numdummies, int, 0);
 MODULE_PARM_DESC(numdummies, "Number of dummy pseudo devices");
 

@@ -8,7 +8,6 @@
 #define CPUID_CACHETYPE	1
 #define CPUID_TCM	2
 #define CPUID_TLBTYPE	3
-#define CPUID_MPIDR	5
 
 #define CPUID_EXT_PFR0	"c1, 0"
 #define CPUID_EXT_PFR1	"c1, 1"
@@ -51,6 +50,11 @@ extern unsigned int processor_id;
 #define read_cpuid_ext(reg) 0
 #endif
 
+/*
+ * The CPU ID never changes at run time, so we might as well tell the
+ * compiler that it's constant.  Use this function to read the CPU ID
+ * rather than directly reading processor_id or read_cpuid() directly.
+ */
 static inline unsigned int __attribute_const__ read_cpuid_id(void)
 {
 	return read_cpuid(CPUID_ID);
@@ -66,11 +70,11 @@ static inline unsigned int __attribute_const__ read_cpuid_tcmstatus(void)
 	return read_cpuid(CPUID_TCM);
 }
 
-static inline unsigned int __attribute_const__ read_cpuid_mpidr(void)
-{
-	return read_cpuid(CPUID_MPIDR);
-}
-
+/*
+ * Intel's XScale3 core supports some v6 features (supersections, L2)
+ * but advertises itself as v5 as it does not support the v6 ISA.  For
+ * this reason, we need a way to explicitly test for this type of CPU.
+ */
 #ifndef CONFIG_CPU_XSC3
 #define cpu_is_xsc3()	0
 #else
@@ -78,7 +82,7 @@ static inline int cpu_is_xsc3(void)
 {
 	unsigned int id;
 	id = read_cpuid_id() & 0xffffe000;
-	
+	/* It covers both Intel ID and Marvell ID */
 	if ((id == 0x69056000) || (id == 0x56056000))
 		return 1;
 

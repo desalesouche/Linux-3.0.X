@@ -9,7 +9,7 @@
  */
 #include <linux/irq.h>
 #include <linux/slab.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
 #include <linux/radix-tree.h>
@@ -17,6 +17,9 @@
 
 #include "internals.h"
 
+/*
+ * lockdep: we want to handle all irq_desc locks as a single lock-class:
+ */
 static struct lock_class_key irq_desc_lock_class;
 
 #if defined(CONFIG_SMP)
@@ -67,8 +70,7 @@ static inline void desc_smp_init(struct irq_desc *desc, int node) { }
 static inline int desc_node(struct irq_desc *desc) { return 0; }
 #endif
 
-static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node,
-		struct module *owner)
+static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node)
 {
 	int cpu;
 
@@ -84,7 +86,6 @@ static void desc_set_defaults(unsigned int irq, struct irq_desc *desc, int node,
 	desc->irq_count = 0;
 	desc->irqs_unhandled = 0;
 	desc->name = NULL;
-	desc->owner = owner;
 	for_each_possible_cpu(cpu)
 		*per_cpu_ptr(desc->kstat_irqs, cpu) = 0;
 	desc_smp_init(desc, node);
@@ -109,7 +110,6 @@ struct irq_desc *irq_to_desc(unsigned int irq)
 {
 	return radix_tree_lookup(&irq_desc_tree, irq);
 }
-EXPORT_SYMBOL(irq_to_desc);
 
 static void delete_irq_desc(unsigned int irq)
 {
@@ -128,7 +128,7 @@ static void free_masks(struct irq_desc *desc)
 static inline void free_masks(struct irq_desc *desc) { }
 #endif
 
-static struct irq_desc *alloc_desc(int irq, int node, struct module *owner)
+static struct irq_desc *alloc_desc(int irq, int node)
 {
 	struct irq_desc *desc;
 	gfp_t gfp = GFP_KERNEL;
@@ -136,7 +136,7 @@ static struct irq_desc *alloc_desc(int irq, int node, struct module *owner)
 	desc = kzalloc_node(sizeof(*desc), gfp, node);
 	if (!desc)
 		return NULL;
-	
+	/* allocate based on nr_cpu_ids */
 	desc->kstat_irqs = alloc_percpu(unsigned int);
 	if (!desc->kstat_irqs)
 		goto err_desc;
@@ -147,7 +147,7 @@ static struct irq_desc *alloc_desc(int irq, int node, struct module *owner)
 	raw_spin_lock_init(&desc->lock);
 	lockdep_set_class(&desc->lock, &irq_desc_lock_class);
 
-	desc_set_defaults(irq, desc, node, owner);
+	desc_set_defaults(irq, desc, node);
 
 	return desc;
 
@@ -173,14 +173,13 @@ static void free_desc(unsigned int irq)
 	kfree(desc);
 }
 
-static int alloc_descs(unsigned int start, unsigned int cnt, int node,
-		       struct module *owner)
+static int alloc_descs(unsigned int start, unsigned int cnt, int node)
 {
 	struct irq_desc *desc;
 	int i;
 
 	for (i = 0; i < cnt; i++) {
-		desc = alloc_desc(start + i, node, owner);
+		desc = alloc_desc(start + i, node);
 		if (!desc)
 			goto err;
 		mutex_lock(&sparse_irq_lock);
@@ -214,7 +213,7 @@ int __init early_irq_init(void)
 
 	init_irq_default_affinity();
 
-	
+	/* Let arch update nr_irqs and return the nr of preallocated irqs */
 	initcnt = arch_probe_nr_irqs();
 	printk(KERN_INFO "NR_IRQS:%d nr_irqs:%d %d\n", NR_IRQS, nr_irqs, initcnt);
 
@@ -228,14 +227,14 @@ int __init early_irq_init(void)
 		nr_irqs = initcnt;
 
 	for (i = 0; i < initcnt; i++) {
-		desc = alloc_desc(i, node, NULL);
+		desc = alloc_desc(i, node);
 		set_bit(i, allocated_irqs);
 		irq_insert_desc(i, desc);
 	}
 	return arch_early_irq_init();
 }
 
-#else 
+#else /* !CONFIG_SPARSE_IRQ */
 
 struct irq_desc irq_desc[NR_IRQS] __cacheline_aligned_in_smp = {
 	[0 ... NR_IRQS-1] = {
@@ -262,7 +261,7 @@ int __init early_irq_init(void)
 		alloc_masks(&desc[i], GFP_KERNEL, node);
 		raw_spin_lock_init(&desc[i].lock);
 		lockdep_set_class(&desc[i].lock, &irq_desc_lock_class);
-		desc_set_defaults(i, &desc[i], node, NULL);
+		desc_set_defaults(i, &desc[i], node);
 	}
 	return arch_early_irq_init();
 }
@@ -277,16 +276,8 @@ static void free_desc(unsigned int irq)
 	dynamic_irq_cleanup(irq);
 }
 
-static inline int alloc_descs(unsigned int start, unsigned int cnt, int node,
-			      struct module *owner)
+static inline int alloc_descs(unsigned int start, unsigned int cnt, int node)
 {
-	u32 i;
-
-	for (i = 0; i < cnt; i++) {
-		struct irq_desc *desc = irq_to_desc(start + i);
-
-		desc->owner = owner;
-	}
 	return start;
 }
 
@@ -295,8 +286,13 @@ static int irq_expand_nr_irqs(unsigned int nr)
 	return -ENOMEM;
 }
 
-#endif 
+#endif /* !CONFIG_SPARSE_IRQ */
 
+/**
+ * generic_handle_irq - Invoke the handler for a particular irq
+ * @irq:	The irq number to handle
+ *
+ */
 int generic_handle_irq(unsigned int irq)
 {
 	struct irq_desc *desc = irq_to_desc(irq);
@@ -308,7 +304,13 @@ int generic_handle_irq(unsigned int irq)
 }
 EXPORT_SYMBOL_GPL(generic_handle_irq);
 
+/* Dynamic interrupt handling */
 
+/**
+ * irq_free_descs - free irq descriptors
+ * @from:	Start of descriptor range
+ * @cnt:	Number of consecutive irqs to free
+ */
 void irq_free_descs(unsigned int from, unsigned int cnt)
 {
 	int i;
@@ -325,9 +327,17 @@ void irq_free_descs(unsigned int from, unsigned int cnt)
 }
 EXPORT_SYMBOL_GPL(irq_free_descs);
 
+/**
+ * irq_alloc_descs - allocate and initialize a range of irq descriptors
+ * @irq:	Allocate for specific irq number if irq >= 0
+ * @from:	Start the search from this irq number
+ * @cnt:	Number of consecutive irqs to allocate.
+ * @node:	Preferred node on which the irq descriptor should be allocated
+ *
+ * Returns the first irq number or error code
+ */
 int __ref
-__irq_alloc_descs(int irq, unsigned int from, unsigned int cnt, int node,
-		  struct module *owner)
+irq_alloc_descs(int irq, unsigned int from, unsigned int cnt, int node)
 {
 	int start, ret;
 
@@ -356,14 +366,21 @@ __irq_alloc_descs(int irq, unsigned int from, unsigned int cnt, int node,
 
 	bitmap_set(allocated_irqs, start, cnt);
 	mutex_unlock(&sparse_irq_lock);
-	return alloc_descs(start, cnt, node, owner);
+	return alloc_descs(start, cnt, node);
 
 err:
 	mutex_unlock(&sparse_irq_lock);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(__irq_alloc_descs);
+EXPORT_SYMBOL_GPL(irq_alloc_descs);
 
+/**
+ * irq_reserve_irqs - mark irqs allocated
+ * @from:	mark from irq number
+ * @cnt:	number of irqs to mark
+ *
+ * Returns 0 on success or an appropriate error code
+ */
 int irq_reserve_irqs(unsigned int from, unsigned int cnt)
 {
 	unsigned int start;
@@ -382,28 +399,23 @@ int irq_reserve_irqs(unsigned int from, unsigned int cnt)
 	return ret;
 }
 
+/**
+ * irq_get_next_irq - get next allocated irq number
+ * @offset:	where to start the search
+ *
+ * Returns next irq number after offset or nr_irqs if none is found.
+ */
 unsigned int irq_get_next_irq(unsigned int offset)
 {
 	return find_next_bit(allocated_irqs, nr_irqs, offset);
 }
 
 struct irq_desc *
-__irq_get_desc_lock(unsigned int irq, unsigned long *flags, bool bus,
-		    unsigned int check)
+__irq_get_desc_lock(unsigned int irq, unsigned long *flags, bool bus)
 {
 	struct irq_desc *desc = irq_to_desc(irq);
 
 	if (desc) {
-		if (check & _IRQ_DESC_CHECK) {
-			if ((check & _IRQ_DESC_PERCPU) &&
-			    !irq_settings_is_per_cpu_devid(desc))
-				return NULL;
-
-			if (!(check & _IRQ_DESC_PERCPU) &&
-			    irq_settings_is_per_cpu_devid(desc))
-				return NULL;
-		}
-
 		if (bus)
 			chip_bus_lock(desc);
 		raw_spin_lock_irqsave(&desc->lock, *flags);
@@ -418,32 +430,17 @@ void __irq_put_desc_unlock(struct irq_desc *desc, unsigned long flags, bool bus)
 		chip_bus_sync_unlock(desc);
 }
 
-int irq_set_percpu_devid(unsigned int irq)
-{
-	struct irq_desc *desc = irq_to_desc(irq);
-
-	if (!desc)
-		return -EINVAL;
-
-	if (desc->percpu_enabled)
-		return -EINVAL;
-
-	desc->percpu_enabled = kzalloc(sizeof(*desc->percpu_enabled), GFP_KERNEL);
-
-	if (!desc->percpu_enabled)
-		return -ENOMEM;
-
-	irq_set_percpu_devid_flags(irq);
-	return 0;
-}
-
+/**
+ * dynamic_irq_cleanup - cleanup a dynamically allocated irq
+ * @irq:	irq number to initialize
+ */
 void dynamic_irq_cleanup(unsigned int irq)
 {
 	struct irq_desc *desc = irq_to_desc(irq);
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&desc->lock, flags);
-	desc_set_defaults(irq, desc, desc_node(desc), NULL);
+	desc_set_defaults(irq, desc, desc_node(desc));
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
 }
 

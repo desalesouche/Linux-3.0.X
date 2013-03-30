@@ -6,7 +6,6 @@
  */
 
 #include <linux/pm_runtime.h>
-#include <linux/export.h>
 #include <linux/async.h>
 
 #include <scsi/scsi.h>
@@ -50,17 +49,8 @@ static int scsi_bus_suspend_common(struct device *dev, pm_message_t msg)
 {
 	int err = 0;
 
-	if (scsi_is_sdev_device(dev)) {
-		if (pm_runtime_suspended(dev)) {
-			if (msg.event == PM_EVENT_SUSPEND ||
-			    msg.event == PM_EVENT_HIBERNATE)
-				return 0;	
-
-			
-			pm_runtime_resume(dev);
-		}
+	if (scsi_is_sdev_device(dev))
 		err = scsi_dev_type_suspend(dev, msg);
-	}
 	return err;
 }
 
@@ -68,11 +58,8 @@ static int scsi_bus_resume_common(struct device *dev)
 {
 	int err = 0;
 
-	if (scsi_is_sdev_device(dev)) {
-		pm_runtime_get_sync(dev->parent);
+	if (scsi_is_sdev_device(dev))
 		err = scsi_dev_type_resume(dev);
-		pm_runtime_put_sync(dev->parent);
-	}
 
 	if (err == 0) {
 		pm_runtime_disable(dev);
@@ -85,11 +72,11 @@ static int scsi_bus_resume_common(struct device *dev)
 static int scsi_bus_prepare(struct device *dev)
 {
 	if (scsi_is_sdev_device(dev)) {
-		
+		/* sd probing uses async_schedule.  Wait until it finishes. */
 		async_synchronize_full();
 
 	} else if (scsi_is_host_device(dev)) {
-		
+		/* Wait until async scanning is finished */
 		scsi_complete_async_scans();
 	}
 	return 0;
@@ -110,7 +97,7 @@ static int scsi_bus_poweroff(struct device *dev)
 	return scsi_bus_suspend_common(dev, PMSG_HIBERNATE);
 }
 
-#else 
+#else /* CONFIG_PM_SLEEP */
 
 #define scsi_bus_resume_common		NULL
 #define scsi_bus_prepare		NULL
@@ -118,7 +105,7 @@ static int scsi_bus_poweroff(struct device *dev)
 #define scsi_bus_freeze			NULL
 #define scsi_bus_poweroff		NULL
 
-#endif 
+#endif /* CONFIG_PM_SLEEP */
 
 #ifdef CONFIG_PM_RUNTIME
 
@@ -134,7 +121,7 @@ static int scsi_runtime_suspend(struct device *dev)
 				round_jiffies_up_relative(HZ/10)));
 	}
 
-	
+	/* Insert hooks here for targets, hosts, and transport classes */
 
 	return err;
 }
@@ -147,7 +134,7 @@ static int scsi_runtime_resume(struct device *dev)
 	if (scsi_is_sdev_device(dev))
 		err = scsi_dev_type_resume(dev);
 
-	
+	/* Insert hooks here for targets, hosts, and transport classes */
 
 	return err;
 }
@@ -158,7 +145,7 @@ static int scsi_runtime_idle(struct device *dev)
 
 	dev_dbg(dev, "scsi_runtime_idle\n");
 
-	
+	/* Insert hooks here for targets, hosts, and transport classes */
 
 	if (scsi_is_sdev_device(dev))
 		err = pm_schedule_suspend(dev, 100);
@@ -172,9 +159,9 @@ int scsi_autopm_get_device(struct scsi_device *sdev)
 	int	err;
 
 	err = pm_runtime_get_sync(&sdev->sdev_gendev);
-	if (err < 0 && err !=-EACCES)
+	if (err < 0)
 		pm_runtime_put_sync(&sdev->sdev_gendev);
-	else
+	else if (err > 0)
 		err = 0;
 	return err;
 }
@@ -201,9 +188,9 @@ int scsi_autopm_get_host(struct Scsi_Host *shost)
 	int	err;
 
 	err = pm_runtime_get_sync(&shost->shost_gendev);
-	if (err < 0 && err !=-EACCES)
+	if (err < 0)
 		pm_runtime_put_sync(&shost->shost_gendev);
-	else
+	else if (err > 0)
 		err = 0;
 	return err;
 }
@@ -219,7 +206,7 @@ void scsi_autopm_put_host(struct Scsi_Host *shost)
 #define scsi_runtime_resume	NULL
 #define scsi_runtime_idle	NULL
 
-#endif 
+#endif /* CONFIG_PM_RUNTIME */
 
 const struct dev_pm_ops scsi_bus_pm_ops = {
 	.prepare =		scsi_bus_prepare,

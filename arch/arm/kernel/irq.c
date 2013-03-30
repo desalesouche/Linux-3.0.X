@@ -22,6 +22,7 @@
  *  Naturally it's not a 1:1 relation, but there are similarities.
  */
 #include <linux/kernel_stat.h>
+#include <linux/module.h>
 #include <linux/signal.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
@@ -34,14 +35,16 @@
 #include <linux/list.h>
 #include <linux/kallsyms.h>
 #include <linux/proc_fs.h>
+#include <linux/ftrace.h>
 
-#include <asm/exception.h>
+#include <asm/system.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 
-#include <asm/perftypes.h>
-
+/*
+ * No architecture-specific irq_finish function defined in arm/arch/irqs.h.
+ */
 #ifndef irq_finish
 #define irq_finish(irq) do { } while (0)
 #endif
@@ -56,53 +59,29 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 #ifdef CONFIG_SMP
 	show_ipi_list(p, prec);
 #endif
+#ifdef CONFIG_LOCAL_TIMERS
+	show_local_irqs(p, prec);
+#endif
 	seq_printf(p, "%*s: %10lu\n", prec, "Err", irq_err_count);
 	return 0;
 }
 
-unsigned int previous_irqs[NR_IRQS+1] = {0};
-void htc_show_interrupt(int i)
-{
-	struct irqaction *action;
-	unsigned long flags;
-	if (i < NR_IRQS) {
-		raw_spin_lock_irqsave(&irq_desc[i].lock, flags);
-		action = irq_desc[i].action;
-		if (!action)
-			goto unlock;
-		if (!(kstat_irqs_cpu(i, 0)) || previous_irqs[i] == (kstat_irqs_cpu(i, 0)))
-			goto unlock;
-		printk("%3d:", i);
-		printk("%6u\t", kstat_irqs_cpu(i, 0)-previous_irqs[i]);
-		printk("%s", action->name);
-		for (action = action->next; action; action = action->next)
-			printk(", %s", action->name);
-		printk("\n");
-		previous_irqs[i] = kstat_irqs_cpu(i, 0);
-unlock:
-		raw_spin_unlock_irqrestore(&irq_desc[i].lock, flags);
-	} else if (i == NR_IRQS) {
-		if (previous_irqs[NR_IRQS] == irq_err_count)
-			return;
-		printk("Err: %lud\n", irq_err_count-previous_irqs[NR_IRQS]);
-		previous_irqs[NR_IRQS] = irq_err_count;
-	}
-}
-
-void htc_show_interrupts(void)
-{
-	int i = 0;
-	for (i = 0; i <= NR_IRQS; i++)
-		htc_show_interrupt(i);
-}
-
-void handle_IRQ(unsigned int irq, struct pt_regs *regs)
+/*
+ * do_IRQ handles all hardware IRQ's.  Decoded IRQs should not
+ * come via this function.  Instead, they should provide their
+ * own 'handler'
+ */
+asmlinkage void __exception_irq_entry
+asm_do_IRQ(unsigned int irq, struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
-	perf_mon_interrupt_in();
 	irq_enter();
 
+	/*
+	 * Some hardware gives randomly wrong interrupts.  Rather
+	 * than crashing, do something sensible.
+	 */
 	if (unlikely(irq >= nr_irqs)) {
 		if (printk_ratelimit())
 			printk(KERN_WARNING "Bad IRQ%u\n", irq);
@@ -111,18 +90,11 @@ void handle_IRQ(unsigned int irq, struct pt_regs *regs)
 		generic_handle_irq(irq);
 	}
 
-	
+	/* AT91 specific workaround */
 	irq_finish(irq);
 
 	irq_exit();
 	set_irq_regs(old_regs);
-	perf_mon_interrupt_out();
-}
-
-asmlinkage void __exception_irq_entry
-asm_do_IRQ(unsigned int irq, struct pt_regs *regs)
-{
-	handle_IRQ(irq, regs);
 }
 
 void set_irq_flags(unsigned int irq, unsigned int iflags)
@@ -140,7 +112,7 @@ void set_irq_flags(unsigned int irq, unsigned int iflags)
 		clr |= IRQ_NOPROBE;
 	if (!(iflags & IRQF_NOAUTOEN))
 		clr |= IRQ_NOAUTOEN;
-	
+	/* Order is clear bits in "clr" then set bits in "set" */
 	irq_modify_status(irq, clr, set & ~clr);
 }
 
@@ -159,50 +131,56 @@ int __init arch_probe_nr_irqs(void)
 
 #ifdef CONFIG_HOTPLUG_CPU
 
-static bool migrate_one_irq(struct irq_desc *desc)
+static bool migrate_one_irq(struct irq_data *d)
 {
-	struct irq_data *d = irq_desc_get_irq_data(desc);
-	const struct cpumask *affinity = d->affinity;
-	struct irq_chip *c;
+	unsigned int cpu = cpumask_any_and(d->affinity, cpu_online_mask);
 	bool ret = false;
 
-	if (irqd_is_per_cpu(d) || !cpumask_test_cpu(smp_processor_id(), affinity))
-		return false;
-
-	if (cpumask_any_and(affinity, cpu_online_mask) >= nr_cpu_ids) {
-		affinity = cpu_online_mask;
+	if (cpu >= nr_cpu_ids) {
+		cpu = cpumask_any(cpu_online_mask);
 		ret = true;
 	}
 
-	c = irq_data_get_irq_chip(d);
-	if (!c->irq_set_affinity)
-		pr_debug("IRQ%u: unable to set affinity\n", d->irq);
-	else if (c->irq_set_affinity(d, affinity, true) == IRQ_SET_MASK_OK && ret)
-		cpumask_copy(d->affinity, affinity);
+	pr_debug("IRQ%u: moving from cpu%u to cpu%u\n", d->irq, d->node, cpu);
+
+	d->chip->irq_set_affinity(d, cpumask_of(cpu), true);
 
 	return ret;
 }
 
+/*
+ * The CPU has been marked offline.  Migrate IRQs off this CPU.  If
+ * the affinity settings do not allow other CPUs, force them onto any
+ * available CPU.
+ */
 void migrate_irqs(void)
 {
-	unsigned int i;
+	unsigned int i, cpu = smp_processor_id();
 	struct irq_desc *desc;
 	unsigned long flags;
 
 	local_irq_save(flags);
 
 	for_each_irq_desc(i, desc) {
-		bool affinity_broken;
+		struct irq_data *d = &desc->irq_data;
+		bool affinity_broken = false;
 
 		raw_spin_lock(&desc->lock);
-		affinity_broken = migrate_one_irq(desc);
+		do {
+			if (desc->action == NULL)
+				break;
+
+			if (d->node != cpu)
+				break;
+
+			affinity_broken = migrate_one_irq(d);
+		} while (0);
 		raw_spin_unlock(&desc->lock);
 
 		if (affinity_broken && printk_ratelimit())
-			pr_warning("IRQ%u no longer affine to CPU%u\n", i,
-				smp_processor_id());
+			pr_warning("IRQ%u no longer affine to CPU%u\n", i, cpu);
 	}
 
 	local_irq_restore(flags);
 }
-#endif 
+#endif /* CONFIG_HOTPLUG_CPU */
