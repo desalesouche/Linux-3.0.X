@@ -12,19 +12,23 @@
  */
 
 #ifdef CONFIG_OF_DEVICE
-#include <linux/module.h>
 #include <linux/device.h>
 #include <linux/mod_devicetable.h>
 #include <linux/pm.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 
-/**
- * of_platform_driver - Legacy of-aware driver for platform devices.
- *
- * An of_platform_driver driver is attached to a basic platform_device on
- * the ibm ebus (ibmebus_bus_type).
- */
+struct of_dev_auxdata {
+	char *compatible;
+	resource_size_t phys_addr;
+	char *name;
+	void *platform_data;
+};
+
+#define OF_DEV_AUXDATA(_compat,_phys,_name,_pdata) \
+	{ .compatible = _compat, .phys_addr = _phys, .name = _name, \
+	  .platform_data = _pdata }
+
 struct of_platform_driver
 {
 	int	(*probe)(struct platform_device* dev,
@@ -40,14 +44,14 @@ struct of_platform_driver
 #define	to_of_platform_driver(drv) \
 	container_of(drv,struct of_platform_driver, driver)
 
-/* Platform drivers register/unregister */
+extern const struct of_device_id of_default_bus_match_table[];
+
 extern struct platform_device *of_device_alloc(struct device_node *np,
 					 const char *bus_id,
 					 struct device *parent);
 extern struct platform_device *of_find_device_by_node(struct device_node *np);
 
-#if !defined(CONFIG_SPARC) /* SPARC has its own device registration method */
-/* Platform devices and busses creation */
+#ifdef CONFIG_OF_ADDRESS 
 extern struct platform_device *of_platform_device_create(struct device_node *np,
 						   const char *bus_id,
 						   struct device *parent);
@@ -55,8 +59,23 @@ extern struct platform_device *of_platform_device_create(struct device_node *np,
 extern int of_platform_bus_probe(struct device_node *root,
 				 const struct of_device_id *matches,
 				 struct device *parent);
-#endif /* !CONFIG_SPARC */
+extern int of_platform_populate(struct device_node *root,
+				const struct of_device_id *matches,
+				const struct of_dev_auxdata *lookup,
+				struct device *parent);
+#endif 
 
-#endif /* CONFIG_OF_DEVICE */
+#endif 
 
-#endif	/* _LINUX_OF_PLATFORM_H */
+#if !defined(CONFIG_OF_ADDRESS)
+struct of_dev_auxdata;
+static inline int of_platform_populate(struct device_node *root,
+					const struct of_device_id *matches,
+					const struct of_dev_auxdata *lookup,
+					struct device *parent)
+{
+	return -ENODEV;
+}
+#endif 
+
+#endif	

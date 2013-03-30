@@ -16,15 +16,8 @@
 #include <linux/plist.h>
 #include <linux/spinlock_types.h>
 
-extern int max_lock_depth; /* for sysctl */
+extern int max_lock_depth; 
 
-/**
- * The rt_mutex structure
- *
- * @wait_lock:	spinlock to protect the structure
- * @wait_list:	pilist head to enqueue waiters in priority order
- * @owner:	the mutex owner
- */
 struct rt_mutex {
 	raw_spinlock_t		wait_lock;
 	struct plist_head	wait_list;
@@ -66,19 +59,13 @@ struct hrtimer_sleeper;
 
 #define __RT_MUTEX_INITIALIZER(mutexname) \
 	{ .wait_lock = __RAW_SPIN_LOCK_UNLOCKED(mutexname.wait_lock) \
-	, .wait_list = PLIST_HEAD_INIT_RAW(mutexname.wait_list, mutexname.wait_lock) \
+	, .wait_list = PLIST_HEAD_INIT(mutexname.wait_list) \
 	, .owner = NULL \
 	__DEBUG_RT_MUTEX_INITIALIZER(mutexname)}
 
 #define DEFINE_RT_MUTEX(mutexname) \
 	struct rt_mutex mutexname = __RT_MUTEX_INITIALIZER(mutexname)
 
-/**
- * rt_mutex_is_locked - is the mutex locked
- * @lock: the mutex to be queried
- *
- * Returns 1 if the mutex is locked, 0 if unlocked.
- */
 static inline int rt_mutex_is_locked(struct rt_mutex *lock)
 {
 	return lock->owner != NULL;
@@ -100,7 +87,7 @@ extern void rt_mutex_unlock(struct rt_mutex *lock);
 
 #ifdef CONFIG_RT_MUTEXES
 # define INIT_RT_MUTEXES(tsk)						\
-	.pi_waiters	= PLIST_HEAD_INIT(tsk.pi_waiters, tsk.pi_lock),	\
+	.pi_waiters	= PLIST_HEAD_INIT(tsk.pi_waiters),	\
 	INIT_RT_MUTEX_DEBUG(tsk)
 #else
 # define INIT_RT_MUTEXES(tsk)
