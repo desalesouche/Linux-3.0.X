@@ -934,8 +934,8 @@ int mnt_had_events(struct proc_mounts *p)
 	int res = 0;
 
 	br_read_lock(vfsmount_lock);
-	if (p->event != ns->event) {
-		p->event = ns->event;
+	if (p->m.poll_event != ns->event) {
+		p->m.poll_event = ns->event;
 		res = 1;
 	}
 	br_read_unlock(vfsmount_lock);
@@ -1048,12 +1048,15 @@ static int show_mountinfo(struct seq_file *m, void *v)
 	if (err)
 		goto out;
 	seq_putc(m, ' ');
-
-	/* mountpoints outside of chroot jail will give SEQ_SKIP on this */
-	err = seq_path_root(m, &mnt_path, &root, " \t\n\\");
-	if (err)
-		goto out;
-
+	seq_path_root(m, &mnt_path, &root, " \t\n\\");
+	if (root.mnt != p->root.mnt || root.dentry != p->root.dentry) {
+		/*
+		 * Mountpoint is outside root, discard that one.  Ugly,
+		 * but less so than trying to do that in iterator in a
+		 * race-free way (due to renames).
+		 */
+		return SEQ_SKIP;
+	}
 	seq_puts(m, mnt->mnt_flags & MNT_READONLY ? " ro" : " rw");
 	show_mnt_opts(m, mnt);
 
@@ -1106,7 +1109,6 @@ static int show_vfsstat(struct seq_file *m, void *v)
 
 	/* device */
 	if (mnt->mnt_sb->s_op->show_devname) {
-		seq_puts(m, "device ");
 		err = mnt->mnt_sb->s_op->show_devname(m, mnt);
 	} else {
 		if (mnt->mnt_devname) {
@@ -1244,9 +1246,8 @@ void umount_tree(struct vfsmount *mnt, int propagate, struct list_head *kill)
 		list_del_init(&p->mnt_expire);
 		list_del_init(&p->mnt_list);
 		__touch_mnt_namespace(p->mnt_ns);
-		if (p->mnt_ns)
-			__mnt_make_shortterm(p);
 		p->mnt_ns = NULL;
+		__mnt_make_shortterm(p);
 		list_del_init(&p->mnt_child);
 		if (p->mnt_parent != p) {
 			p->mnt_parent->mnt_ghosts++;
@@ -2720,11 +2721,25 @@ EXPORT_SYMBOL(put_mnt_ns);
 
 struct vfsmount *kern_mount_data(struct file_system_type *type, void *data)
 {
-	return vfs_kern_mount(type, MS_KERNMOUNT, type->name, data);
+	struct vfsmount *mnt;
+	mnt = vfs_kern_mount(type, MS_KERNMOUNT, type->name, data);
+	if (!IS_ERR(mnt)) {
+		/*
+		 * it is a longterm mount, don't release mnt until
+		 * we unmount before file sys is unregistered
+		*/
+		mnt_make_longterm(mnt);
+	}
+	return mnt;
 }
 EXPORT_SYMBOL_GPL(kern_mount_data);
 
-bool our_mnt(struct vfsmount *mnt)
+void kern_unmount(struct vfsmount *mnt)
 {
-	return check_mnt(mnt);
+	/* release long term mount so mount point can be released */
+	if (!IS_ERR_OR_NULL(mnt)) {
+		mnt_make_shortterm(mnt);
+		mntput(mnt);
+	}
 }
+EXPORT_SYMBOL(kern_unmount);

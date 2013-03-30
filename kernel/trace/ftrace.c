@@ -32,7 +32,6 @@
 
 #include <trace/events/sched.h>
 
-#include <asm/ftrace.h>
 #include <asm/setup.h>
 
 #include "trace_output.h"
@@ -82,14 +81,14 @@ static int ftrace_disabled __read_mostly;
 
 static DEFINE_MUTEX(ftrace_lock);
 
-static struct ftrace_ops ftrace_list_end __read_mostly =
-{
+static struct ftrace_ops ftrace_list_end __read_mostly = {
 	.func		= ftrace_stub,
 };
 
 static struct ftrace_ops *ftrace_global_list __read_mostly = &ftrace_list_end;
 static struct ftrace_ops *ftrace_ops_list __read_mostly = &ftrace_list_end;
 ftrace_func_t ftrace_trace_function __read_mostly = ftrace_stub;
+static ftrace_func_t __ftrace_trace_function_delay __read_mostly = ftrace_stub;
 ftrace_func_t __ftrace_trace_function __read_mostly = ftrace_stub;
 ftrace_func_t ftrace_pid_function __read_mostly = ftrace_stub;
 static struct ftrace_ops global_ops;
@@ -148,9 +147,11 @@ void clear_ftrace_function(void)
 {
 	ftrace_trace_function = ftrace_stub;
 	__ftrace_trace_function = ftrace_stub;
+	__ftrace_trace_function_delay = ftrace_stub;
 	ftrace_pid_function = ftrace_stub;
 }
 
+#undef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
 #ifndef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
 /*
  * For those archs that do not test ftrace_trace_stop in their
@@ -210,7 +211,12 @@ static void update_ftrace_function(void)
 #ifdef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
 	ftrace_trace_function = func;
 #else
+#ifdef CONFIG_DYNAMIC_FTRACE
+	/* do not update till all functions have been modified */
+	__ftrace_trace_function_delay = func;
+#else
 	__ftrace_trace_function = func;
+#endif
 	ftrace_trace_function = ftrace_test_stop_func;
 #endif
 }
@@ -785,8 +791,7 @@ static void unregister_ftrace_profiler(void)
 	unregister_ftrace_graph();
 }
 #else
-static struct ftrace_ops ftrace_profile_ops __read_mostly =
-{
+static struct ftrace_ops ftrace_profile_ops __read_mostly = {
 	.func		= function_profile_call,
 };
 
@@ -806,19 +811,10 @@ ftrace_profile_write(struct file *filp, const char __user *ubuf,
 		     size_t cnt, loff_t *ppos)
 {
 	unsigned long val;
-	char buf[64];		/* big enough to hold a number */
 	int ret;
 
-	if (cnt >= sizeof(buf))
-		return -EINVAL;
-
-	if (copy_from_user(&buf, ubuf, cnt))
-		return -EFAULT;
-
-	buf[cnt] = 0;
-
-	ret = strict_strtoul(buf, 10, &val);
-	if (ret < 0)
+	ret = kstrtoul_from_user(ubuf, cnt, 10, &val);
+	if (ret)
 		return ret;
 
 	val = !!val;
@@ -952,7 +948,7 @@ struct ftrace_func_probe {
 };
 
 enum {
-	FTRACE_UPDATE_CALLS		= (1 << 0),
+	FTRACE_ENABLE_CALLS		= (1 << 0),
 	FTRACE_DISABLE_CALLS		= (1 << 1),
 	FTRACE_UPDATE_TRACE_FUNC	= (1 << 2),
 	FTRACE_START_FUNC_RET		= (1 << 3),
@@ -1521,7 +1517,7 @@ int ftrace_text_reserved(void *start, void *end)
 
 
 static int
-__ftrace_replace_code(struct dyn_ftrace *rec, int update)
+__ftrace_replace_code(struct dyn_ftrace *rec, int enable)
 {
 	unsigned long ftrace_addr;
 	unsigned long flag = 0UL;
@@ -1529,17 +1525,17 @@ __ftrace_replace_code(struct dyn_ftrace *rec, int update)
 	ftrace_addr = (unsigned long)FTRACE_ADDR;
 
 	/*
-	 * If we are updating calls:
+	 * If we are enabling tracing:
 	 *
 	 *   If the record has a ref count, then we need to enable it
 	 *   because someone is using it.
 	 *
 	 *   Otherwise we make sure its disabled.
 	 *
-	 * If we are disabling calls, then disable all records that
+	 * If we are disabling tracing, then disable all records that
 	 * are enabled.
 	 */
-	if (update && (rec->flags & ~FTRACE_FL_MASK))
+	if (enable && (rec->flags & ~FTRACE_FL_MASK))
 		flag = FTRACE_FL_ENABLED;
 
 	/* If the state of this record hasn't changed, then do nothing */
@@ -1555,7 +1551,7 @@ __ftrace_replace_code(struct dyn_ftrace *rec, int update)
 	return ftrace_make_nop(NULL, rec, ftrace_addr);
 }
 
-static void ftrace_replace_code(int update)
+static void ftrace_replace_code(int enable)
 {
 	struct dyn_ftrace *rec;
 	struct ftrace_page *pg;
@@ -1569,7 +1565,7 @@ static void ftrace_replace_code(int update)
 		if (rec->flags & FTRACE_FL_FREE)
 			continue;
 
-		failed = __ftrace_replace_code(rec, update);
+		failed = __ftrace_replace_code(rec, enable);
 		if (failed) {
 			ftrace_bug(failed, rec->ip);
 			/* Stop processing */
@@ -1619,7 +1615,13 @@ static int __ftrace_modify_code(void *data)
 {
 	int *command = data;
 
-	if (*command & FTRACE_UPDATE_CALLS)
+	/*
+	 * Do not call function tracer while we update the code.
+	 * We are in stop machine, no worrying about races.
+	 */
+	function_trace_stop++;
+
+	if (*command & FTRACE_ENABLE_CALLS)
 		ftrace_replace_code(1);
 	else if (*command & FTRACE_DISABLE_CALLS)
 		ftrace_replace_code(0);
@@ -1631,6 +1633,18 @@ static int __ftrace_modify_code(void *data)
 		ftrace_enable_ftrace_graph_caller();
 	else if (*command & FTRACE_STOP_FUNC_RET)
 		ftrace_disable_ftrace_graph_caller();
+
+#ifndef CONFIG_HAVE_FUNCTION_TRACE_MCOUNT_TEST
+	/*
+	 * For archs that call ftrace_test_stop_func(), we must
+	 * wait till after we update all the function callers
+	 * before we update the callback. This keeps different
+	 * ops that record different functions from corrupting
+	 * each other.
+	 */
+	__ftrace_trace_function = __ftrace_trace_function_delay;
+#endif
+	function_trace_stop--;
 
 	return 0;
 }
@@ -1675,7 +1689,7 @@ static int ftrace_startup(struct ftrace_ops *ops, int command)
 		return -ENODEV;
 
 	ftrace_start_up++;
-	command |= FTRACE_UPDATE_CALLS;
+	command |= FTRACE_ENABLE_CALLS;
 
 	/* ops marked global share the filter hashes */
 	if (ops->flags & FTRACE_OPS_FL_GLOBAL) {
@@ -1727,7 +1741,8 @@ static void ftrace_shutdown(struct ftrace_ops *ops, int command)
 	if (ops != &global_ops || !global_start_up)
 		ops->flags &= ~FTRACE_OPS_FL_ENABLED;
 
-	command |= FTRACE_UPDATE_CALLS;
+	if (!ftrace_start_up)
+		command |= FTRACE_DISABLE_CALLS;
 
 	if (saved_ftrace_func != ftrace_trace_function) {
 		saved_ftrace_func = ftrace_trace_function;
@@ -1749,7 +1764,7 @@ static void ftrace_startup_sysctl(void)
 	saved_ftrace_func = NULL;
 	/* ftrace_start_up is true if we want ftrace running */
 	if (ftrace_start_up)
-		ftrace_run_update_code(FTRACE_UPDATE_CALLS);
+		ftrace_run_update_code(FTRACE_ENABLE_CALLS);
 }
 
 static void ftrace_shutdown_sysctl(void)
@@ -2058,7 +2073,7 @@ static void reset_iter_read(struct ftrace_iterator *iter)
 {
 	iter->pos = 0;
 	iter->func_pos = 0;
-	iter->flags &= ~(FTRACE_ITER_PRINTALL | FTRACE_ITER_HASH);
+	iter->flags &= ~(FTRACE_ITER_PRINTALL & FTRACE_ITER_HASH);
 }
 
 static void *t_start(struct seq_file *m, loff_t *pos)
@@ -2709,8 +2724,8 @@ __unregister_ftrace_function_probe(char *glob, struct ftrace_probe_ops *ops,
 					continue;
 			}
 
-			hlist_del_rcu(&entry->node);
-			call_rcu_sched(&entry->rcu, ftrace_free_entry_rcu);
+			hlist_del(&entry->node);
+			call_rcu(&entry->rcu, ftrace_free_entry_rcu);
 		}
 	}
 	__disable_ftrace_function_probe();
@@ -2902,7 +2917,7 @@ ftrace_set_regex(struct ftrace_ops *ops, unsigned char *buf, int len,
 	ret = ftrace_hash_move(ops, enable, orig_hash, hash);
 	if (!ret && ops->flags & FTRACE_OPS_FL_ENABLED
 	    && ftrace_enabled)
-		ftrace_run_update_code(FTRACE_UPDATE_CALLS);
+		ftrace_run_update_code(FTRACE_ENABLE_CALLS);
 
 	mutex_unlock(&ftrace_lock);
 
@@ -3090,7 +3105,7 @@ ftrace_regex_release(struct inode *inode, struct file *file)
 				       orig_hash, iter->hash);
 		if (!ret && (iter->ops->flags & FTRACE_OPS_FL_ENABLED)
 		    && ftrace_enabled)
-			ftrace_run_update_code(FTRACE_UPDATE_CALLS);
+			ftrace_run_update_code(FTRACE_ENABLE_CALLS);
 
 		mutex_unlock(&ftrace_lock);
 	}
@@ -3370,7 +3385,7 @@ static int ftrace_process_locs(struct module *mod,
 {
 	unsigned long *p;
 	unsigned long addr;
-	unsigned long flags;
+	unsigned long flags = 0; /* Shut up gcc */
 
 	mutex_lock(&ftrace_lock);
 	p = start;
@@ -3388,12 +3403,18 @@ static int ftrace_process_locs(struct module *mod,
 	}
 
 	/*
-	 * Disable interrupts to prevent interrupts from executing
-	 * code that is being modified.
+	 * We only need to disable interrupts on start up
+	 * because we are modifying code that an interrupt
+	 * may execute, and the modification is not atomic.
+	 * But for modules, nothing runs the code we modify
+	 * until we are finished with it, and there's no
+	 * reason to cause large interrupt latencies while we do it.
 	 */
-	local_irq_save(flags);
+	if (!mod)
+		local_irq_save(flags);
 	ftrace_update_code(mod);
-	local_irq_restore(flags);
+	if (!mod)
+		local_irq_restore(flags);
 	mutex_unlock(&ftrace_lock);
 
 	return 0;
@@ -3432,49 +3453,35 @@ static void ftrace_init_module(struct module *mod,
 	ftrace_process_locs(mod, start, end);
 }
 
-static int ftrace_module_notify_enter(struct notifier_block *self,
-				      unsigned long val, void *data)
+static int ftrace_module_notify(struct notifier_block *self,
+				unsigned long val, void *data)
 {
 	struct module *mod = data;
 
-	if (val == MODULE_STATE_COMING)
+	switch (val) {
+	case MODULE_STATE_COMING:
 		ftrace_init_module(mod, mod->ftrace_callsites,
 				   mod->ftrace_callsites +
 				   mod->num_ftrace_callsites);
-	return 0;
-}
-
-static int ftrace_module_notify_exit(struct notifier_block *self,
-				     unsigned long val, void *data)
-{
-	struct module *mod = data;
-
-	if (val == MODULE_STATE_GOING)
+		break;
+	case MODULE_STATE_GOING:
 		ftrace_release_mod(mod);
+		break;
+	}
 
 	return 0;
 }
 #else
-static int ftrace_module_notify_enter(struct notifier_block *self,
-				      unsigned long val, void *data)
-{
-	return 0;
-}
-static int ftrace_module_notify_exit(struct notifier_block *self,
-				     unsigned long val, void *data)
+static int ftrace_module_notify(struct notifier_block *self,
+				unsigned long val, void *data)
 {
 	return 0;
 }
 #endif /* CONFIG_MODULES */
 
-struct notifier_block ftrace_module_enter_nb = {
-	.notifier_call = ftrace_module_notify_enter,
-	.priority = INT_MAX,	/* Run before anything that can use kprobes */
-};
-
-struct notifier_block ftrace_module_exit_nb = {
-	.notifier_call = ftrace_module_notify_exit,
-	.priority = INT_MIN,	/* Run after anything that can remove kprobes */
+struct notifier_block ftrace_module_nb = {
+	.notifier_call = ftrace_module_notify,
+	.priority = 0,
 };
 
 extern unsigned long __start_mcount_loc[];
@@ -3508,13 +3515,9 @@ void __init ftrace_init(void)
 				  __start_mcount_loc,
 				  __stop_mcount_loc);
 
-	ret = register_module_notifier(&ftrace_module_enter_nb);
+	ret = register_module_notifier(&ftrace_module_nb);
 	if (ret)
-		pr_warning("Failed to register trace ftrace module enter notifier\n");
-
-	ret = register_module_notifier(&ftrace_module_exit_nb);
-	if (ret)
-		pr_warning("Failed to register trace ftrace module exit notifier\n");
+		pr_warning("Failed to register trace ftrace module notifier\n");
 
 	set_ftrace_early_filters();
 
