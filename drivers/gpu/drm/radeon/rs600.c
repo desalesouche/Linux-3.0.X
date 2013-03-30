@@ -536,7 +536,7 @@ int rs600_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr)
 	addr = addr & 0xFFFFFFFFFFFFF000ULL;
 	addr |= R600_PTE_VALID | R600_PTE_SYSTEM | R600_PTE_SNOOPED;
 	addr |= R600_PTE_READABLE | R600_PTE_WRITEABLE;
-	writeq(addr, ((void __iomem *)ptr) + (i * 8));
+	writeq(addr, ptr + (i * 8));
 	return 0;
 }
 
@@ -698,7 +698,9 @@ int rs600_irq_process(struct radeon_device *rdev)
 			WREG32(RADEON_BUS_CNTL, msi_rearm | RS600_MSI_REARM);
 			break;
 		default:
-			WREG32(RADEON_MSI_REARM_EN, RV370_MSI_REARM_EN);
+			msi_rearm = RREG32(RADEON_MSI_REARM_EN) & ~RV370_MSI_REARM_EN;
+			WREG32(RADEON_MSI_REARM_EN, msi_rearm);
+			WREG32(RADEON_MSI_REARM_EN, msi_rearm | RV370_MSI_REARM_EN);
 			break;
 		}
 	}

@@ -75,7 +75,7 @@ void __init at91_add_device_usbh(struct at91_usbh_data *data) {}
  *  USB Device (Gadget)
  * -------------------------------------------------------------------- */
 
-#ifdef CONFIG_USB_GADGET_AT91
+#ifdef CONFIG_USB_AT91
 static struct at91_udc_data udc_data;
 
 static struct resource udc_resources[] = {
@@ -454,7 +454,7 @@ static struct i2c_gpio_platform_data pdata = {
 
 static struct platform_device at91rm9200_twi_device = {
 	.name			= "i2c-gpio",
-	.id			= 0,
+	.id			= -1,
 	.dev.platform_data	= &pdata,
 };
 

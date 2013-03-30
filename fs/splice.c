@@ -31,7 +31,6 @@
 #include <linux/uio.h>
 #include <linux/security.h>
 #include <linux/gfp.h>
-#include <linux/socket.h>
 
 /*
  * Attempt to steal a page from a pipe buffer. This should perhaps go into
@@ -133,7 +132,7 @@ error:
 	return err;
 }
 
-static const struct pipe_buf_operations page_cache_pipe_buf_ops = {
+const struct pipe_buf_operations page_cache_pipe_buf_ops = {
 	.can_merge = 0,
 	.map = generic_pipe_buf_map,
 	.unmap = generic_pipe_buf_unmap,
@@ -265,7 +264,7 @@ ssize_t splice_to_pipe(struct pipe_inode_info *pipe,
 	return ret;
 }
 
-static void spd_release_page(struct splice_pipe_desc *spd, unsigned int i)
+void spd_release_page(struct splice_pipe_desc *spd, unsigned int i)
 {
 	page_cache_release(spd->pages[i]);
 }
@@ -692,11 +691,7 @@ static int pipe_to_sendpage(struct pipe_inode_info *pipe,
 	if (!likely(file->f_op && file->f_op->sendpage))
 		return -EINVAL;
 
-	more = (sd->flags & SPLICE_F_MORE) ? MSG_MORE : 0;
-
-	if (sd->len < sd->total_len && pipe->nrbufs > 1)
-		more |= MSG_SENDPAGE_NOTLAST;
-
+	more = (sd->flags & SPLICE_F_MORE) || sd->len < sd->total_len;
 	return file->f_op->sendpage(file, buf->page, buf->offset,
 				    sd->len, &pos, more);
 }
