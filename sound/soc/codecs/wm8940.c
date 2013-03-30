@@ -297,6 +297,8 @@ static int wm8940_add_widgets(struct snd_soc_codec *codec)
 	if (ret)
 		goto error_ret;
 	ret = snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
+	if (ret)
+		goto error_ret;
 
 error_ret:
 	return ret;
@@ -469,6 +471,8 @@ static int wm8940_set_bias_level(struct snd_soc_codec *codec,
 		ret = snd_soc_write(codec, WM8940_POWER1, pwr_reg);
 		break;
 	}
+
+	codec->dapm.bias_level = level;
 
 	return ret;
 }
@@ -681,6 +685,8 @@ static int wm8940_resume(struct snd_soc_codec *codec)
 		}
 	}
 	ret = wm8940_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	if (ret)
+		goto error_ret;
 
 error_ret:
 	return ret;
@@ -726,6 +732,9 @@ static int wm8940_probe(struct snd_soc_codec *codec)
 	if (ret)
 		return ret;
 	ret = wm8940_add_widgets(codec);
+	if (ret)
+		return ret;
+
 	return ret;
 }
 

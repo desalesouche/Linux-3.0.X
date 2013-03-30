@@ -199,8 +199,9 @@ void atmel_config_rs485(struct uart_port *port, struct serial_rs485 *rs485conf)
 {
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
 	unsigned int mode;
+	unsigned long flags;
 
-	spin_lock(&port->lock);
+	spin_lock_irqsave(&port->lock, flags);
 
 	/* Disable interrupts */
 	UART_PUT_IDR(port, atmel_port->tx_done_mask);
@@ -231,7 +232,7 @@ void atmel_config_rs485(struct uart_port *port, struct serial_rs485 *rs485conf)
 	/* Enable interrupts */
 	UART_PUT_IER(port, atmel_port->tx_done_mask);
 
-	spin_unlock(&port->lock);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 }
 
@@ -1609,11 +1610,9 @@ static struct console atmel_console = {
 static int __init atmel_console_init(void)
 {
 	if (atmel_default_console_device) {
-		struct atmel_uart_data *pdata =
-			atmel_default_console_device->dev.platform_data;
-
-		add_preferred_console(ATMEL_DEVICENAME, pdata->num, NULL);
-		atmel_init_port(&atmel_ports[pdata->num],
+		add_preferred_console(ATMEL_DEVICENAME,
+				      atmel_default_console_device->id, NULL);
+		atmel_init_port(&atmel_ports[atmel_default_console_device->id],
 				atmel_default_console_device);
 		register_console(&atmel_console);
 	}

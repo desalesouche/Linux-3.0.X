@@ -1210,7 +1210,7 @@ static int sctp_cmd_interpreter(sctp_event_t event_type,
 	int local_cork = 0;
 
 	if (SCTP_EVENT_T_TIMEOUT != event_type)
-		chunk = event_arg;
+		chunk = (struct sctp_chunk *) event_arg;
 
 	/* Note:  This whole file is a huge candidate for rework.
 	 * For example, each command could either have its own handler, so
@@ -1604,8 +1604,9 @@ static int sctp_cmd_interpreter(sctp_event_t event_type,
 					asoc->outqueue.outstanding_bytes;
 			sackh.num_gap_ack_blocks = 0;
 			sackh.num_dup_tsns = 0;
+			chunk->subh.sack_hdr = &sackh;
 			sctp_add_cmd_sf(commands, SCTP_CMD_PROCESS_SACK,
-					SCTP_SACKH(&sackh));
+					SCTP_CHUNK(chunk));
 			break;
 
 		case SCTP_CMD_DISCARD_PACKET:
@@ -1689,11 +1690,6 @@ static int sctp_cmd_interpreter(sctp_event_t event_type,
 		case SCTP_CMD_PURGE_ASCONF_QUEUE:
 			sctp_asconf_queue_teardown(asoc);
 			break;
-
-		case SCTP_CMD_SET_ASOC:
-			asoc = cmd->obj.asoc;
-			break;
-
 		default:
 			pr_warn("Impossible command: %u, %p\n",
 				cmd->verb, cmd->obj.ptr);

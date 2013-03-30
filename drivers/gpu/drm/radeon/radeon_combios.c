@@ -620,8 +620,8 @@ static struct radeon_i2c_bus_rec combios_setup_i2c_bus(struct radeon_device *rde
 		i2c.y_data_mask = 0x80;
 	} else {
 		/* default masks for ddc pads */
-		i2c.mask_clk_mask = RADEON_GPIO_EN_1;
-		i2c.mask_data_mask = RADEON_GPIO_EN_0;
+		i2c.mask_clk_mask = RADEON_GPIO_MASK_1;
+		i2c.mask_data_mask = RADEON_GPIO_MASK_0;
 		i2c.a_clk_mask = RADEON_GPIO_A_1;
 		i2c.a_data_mask = RADEON_GPIO_A_0;
 		i2c.en_clk_mask = RADEON_GPIO_EN_1;
@@ -956,6 +956,15 @@ struct radeon_encoder_primary_dac *radeon_combios_get_primary_dac_info(struct
 		/* if the values are all zeros, use the table */
 		if (p_dac->ps2_pdac_adj)
 			found = 1;
+	}
+
+	/* quirks */
+	/* Radeon 9100 (R200) */
+	if ((dev->pdev->device == 0x514D) &&
+	    (dev->pdev->subsystem_vendor == 0x174B) &&
+	    (dev->pdev->subsystem_device == 0x7149)) {
+		/* vbios value is bad, use the default */
+		found = 0;
 	}
 
 	if (!found) /* fallback to defaults */
@@ -2338,6 +2347,14 @@ bool radeon_get_legacy_connector_info_from_bios(struct drm_device *dev)
 								   1),
 								  ATOM_DEVICE_CRT1_SUPPORT);
 				}
+				/* RV100 board with external TDMS bit mis-set.
+				 * Actually uses internal TMDS, clear the bit.
+				 */
+				if (dev->pdev->device == 0x5159 &&
+				    dev->pdev->subsystem_vendor == 0x1014 &&
+				    dev->pdev->subsystem_device == 0x029A) {
+					tmp &= ~(1 << 4);
+				}
 				if ((tmp >> 4) & 0x1) {
 					devices |= ATOM_DEVICE_DFP2_SUPPORT;
 					radeon_add_legacy_encoder(dev,
@@ -2557,7 +2574,6 @@ void radeon_combios_get_power_modes(struct radeon_device *rdev)
 	u16 offset, misc, misc2 = 0;
 	u8 rev, blocks, tmp;
 	int state_index = 0;
-	struct radeon_i2c_bus_rec i2c_bus;
 
 	rdev->pm.default_power_state_index = -1;
 
@@ -2576,6 +2592,7 @@ void radeon_combios_get_power_modes(struct radeon_device *rdev)
 	offset = combios_get_table_offset(dev, COMBIOS_OVERDRIVE_INFO_TABLE);
 	if (offset) {
 		u8 thermal_controller = 0, gpio = 0, i2c_addr = 0, clk_bit = 0, data_bit = 0;
+		struct radeon_i2c_bus_rec i2c_bus;
 
 		rev = RBIOS8(offset);
 
@@ -2615,25 +2632,6 @@ void radeon_combios_get_power_modes(struct radeon_device *rdev)
 				info.addr = i2c_addr >> 1;
 				strlcpy(info.type, name, sizeof(info.type));
 				i2c_new_device(&rdev->pm.i2c_bus->adapter, &info);
-			}
-		}
-	} else {
-		/* boards with a thermal chip, but no overdrive table */
-
-		/* Asus 9600xt has an f75375 on the monid bus */
-		if ((dev->pdev->device == 0x4152) &&
-		    (dev->pdev->subsystem_vendor == 0x1043) &&
-		    (dev->pdev->subsystem_device == 0xc002)) {
-			i2c_bus = combios_setup_i2c_bus(rdev, DDC_MONID, 0, 0);
-			rdev->pm.i2c_bus = radeon_i2c_lookup(rdev, &i2c_bus);
-			if (rdev->pm.i2c_bus) {
-				struct i2c_board_info info = { };
-				const char *name = "f75375";
-				info.addr = 0x28;
-				strlcpy(info.type, name, sizeof(info.type));
-				i2c_new_device(&rdev->pm.i2c_bus->adapter, &info);
-				DRM_INFO("Possible %s thermal controller at 0x%02x\n",
-					 name, info.addr);
 			}
 		}
 	}

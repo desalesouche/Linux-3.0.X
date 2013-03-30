@@ -466,7 +466,7 @@ static void atombios_crtc_program_ss(struct drm_crtc *crtc,
 			return;
 		}
 		args.v2.ucEnable = enable;
-		if ((ss->percentage == 0) || (ss->type & ATOM_EXTERNAL_SS_MASK) || ASIC_IS_DCE41(rdev))
+		if ((ss->percentage == 0) || (ss->type & ATOM_EXTERNAL_SS_MASK))
 			args.v2.ucEnable = ATOM_DISABLE;
 	} else if (ASIC_IS_DCE3(rdev)) {
 		args.v1.usSpreadSpectrumPercentage = cpu_to_le16(ss->percentage);
@@ -764,7 +764,7 @@ static void atombios_crtc_set_dcpll(struct drm_crtc *crtc,
 }
 
 static void atombios_crtc_program_pll(struct drm_crtc *crtc,
-				      u32 crtc_id,
+				      int crtc_id,
 				      int pll_id,
 				      u32 encoder_mode,
 				      u32 encoder_id,
@@ -851,7 +851,8 @@ static void atombios_crtc_program_pll(struct drm_crtc *crtc,
 			args.v5.ucPpll = pll_id;
 			break;
 		case 6:
-			args.v6.ulDispEngClkFreq = cpu_to_le32(crtc_id << 24 | clock / 10);
+			args.v6.ulCrtcPclkFreq.ucCRTC = crtc_id;
+			args.v6.ulCrtcPclkFreq.ulPixelClock = cpu_to_le32(clock / 10);
 			args.v6.ucRefDiv = ref_div;
 			args.v6.usFbDiv = cpu_to_le16(fb_div);
 			args.v6.ulFbDivDecFrac = cpu_to_le32(frac_fb_div * 100000);
@@ -1172,7 +1173,7 @@ static int dce4_crtc_do_set_base(struct drm_crtc *crtc,
 	WREG32(EVERGREEN_GRPH_ENABLE + radeon_crtc->crtc_offset, 1);
 
 	WREG32(EVERGREEN_DESKTOP_HEIGHT + radeon_crtc->crtc_offset,
-	       crtc->mode.vdisplay);
+	       target_fb->height);
 	x &= ~3;
 	y &= ~1;
 	WREG32(EVERGREEN_VIEWPORT_START + radeon_crtc->crtc_offset,
@@ -1341,7 +1342,7 @@ static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 	WREG32(AVIVO_D1GRPH_ENABLE + radeon_crtc->crtc_offset, 1);
 
 	WREG32(AVIVO_D1MODE_DESKTOP_HEIGHT + radeon_crtc->crtc_offset,
-	       crtc->mode.vdisplay);
+	       target_fb->height);
 	x &= ~3;
 	y &= ~1;
 	WREG32(AVIVO_D1MODE_VIEWPORT_START + radeon_crtc->crtc_offset,

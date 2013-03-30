@@ -230,6 +230,7 @@
 #define	MC_VM_MD_L1_TLB0_CNTL				0x2654
 #define	MC_VM_MD_L1_TLB1_CNTL				0x2658
 #define	MC_VM_MD_L1_TLB2_CNTL				0x265C
+#define	MC_VM_MD_L1_TLB3_CNTL				0x2698
 
 #define	FUS_MC_VM_MD_L1_TLB0_CNTL			0x265C
 #define	FUS_MC_VM_MD_L1_TLB1_CNTL			0x2660
@@ -351,7 +352,6 @@
 #define		COLOR_BUFFER_SIZE(x)				((x) << 0)
 #define		POSITION_BUFFER_SIZE(x)				((x) << 8)
 #define		SMX_BUFFER_SIZE(x)				((x) << 16)
-#define	SX_MEMORY_EXPORT_BASE				0x9010
 #define	SX_MISC						0x28350
 
 #define CB_PERF_CTR0_SEL_0				0x9A20
@@ -1123,7 +1123,6 @@
 #define CAYMAN_PA_SC_AA_CONFIG				0x28BE0
 #define         CAYMAN_MSAA_NUM_SAMPLES_SHIFT           0
 #define         CAYMAN_MSAA_NUM_SAMPLES_MASK            0x7
-#define CAYMAN_SX_SCATTER_EXPORT_BASE			0x28358
 /* cayman packet3 addition */
 #define	CAYMAN_PACKET3_DEALLOC_STATE			0x14
 

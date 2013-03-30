@@ -1349,15 +1349,13 @@ static inline struct xfrm_dst *xfrm_alloc_dst(struct net *net, int family)
 		BUG();
 	}
 	xdst = dst_alloc(dst_ops, NULL, 0, 0, 0);
-
-	if (likely(xdst)) {
-		memset(&xdst->u.rt6.rt6i_table, 0,
-			sizeof(*xdst) - sizeof(struct dst_entry));
-		xdst->flo.ops = &xfrm_bundle_fc_ops;
-	} else
-		xdst = ERR_PTR(-ENOBUFS);
-
+	memset(&xdst->u.rt6.rt6i_table, 0, sizeof(*xdst) - sizeof(struct dst_entry));
 	xfrm_policy_put_afinfo(afinfo);
+
+	if (likely(xdst))
+		xdst->flo.ops = &xfrm_bundle_fc_ops;
+	else
+		xdst = ERR_PTR(-ENOBUFS);
 
 	return xdst;
 }
@@ -1761,7 +1759,7 @@ static struct dst_entry *make_blackhole(struct net *net, u16 family,
 
 	if (!afinfo) {
 		dst_release(dst_orig);
-		ret = ERR_PTR(-EINVAL);
+		return ERR_PTR(-EINVAL);
 	} else {
 		ret = afinfo->blackhole_route(net, dst_orig);
 	}
@@ -1919,6 +1917,9 @@ no_transform:
 	}
 ok:
 	xfrm_pols_put(pols, drop_pols);
+	if (dst && dst->xfrm &&
+	    dst->xfrm->props.mode == XFRM_MODE_TUNNEL)
+		dst->flags |= DST_XFRM_TUNNEL;
 	return dst;
 
 nopol:
@@ -2387,11 +2388,6 @@ static unsigned int xfrm_default_mtu(const struct dst_entry *dst)
 	return dst_mtu(dst->path);
 }
 
-static struct neighbour *xfrm_neigh_lookup(const struct dst_entry *dst, const void *daddr)
-{
-	return dst_neigh_lookup(dst->path, daddr);
-}
-
 int xfrm_policy_register_afinfo(struct xfrm_policy_afinfo *afinfo)
 {
 	struct net *net;
@@ -2417,8 +2413,6 @@ int xfrm_policy_register_afinfo(struct xfrm_policy_afinfo *afinfo)
 			dst_ops->negative_advice = xfrm_negative_advice;
 		if (likely(dst_ops->link_failure == NULL))
 			dst_ops->link_failure = xfrm_link_failure;
-		if (likely(dst_ops->neigh_lookup == NULL))
-			dst_ops->neigh_lookup = xfrm_neigh_lookup;
 		if (likely(afinfo->garbage_collect == NULL))
 			afinfo->garbage_collect = __xfrm_garbage_collect;
 		xfrm_policy_afinfo[afinfo->family] = afinfo;

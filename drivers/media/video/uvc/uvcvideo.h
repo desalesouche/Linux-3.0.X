@@ -183,7 +183,8 @@ struct uvc_xu_control {
  * Driver specific constants.
  */
 
-#define DRIVER_VERSION		"1.1.1"
+#define DRIVER_VERSION_NUMBER	KERNEL_VERSION(1, 1, 0)
+#define DRIVER_VERSION		"v1.1.0"
 
 /* Number of isochronous URBs. */
 #define UVC_URBS		5
@@ -199,6 +200,7 @@ struct uvc_xu_control {
 
 /* Maximum allowed number of control mappings per device */
 #define UVC_MAX_CONTROL_MAPPINGS	1024
+#define UVC_MAX_CONTROL_MENU_ENTRIES	32
 
 /* Devices quirks */
 #define UVC_QUIRK_STATUS_INTERVAL	0x00000001

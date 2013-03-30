@@ -255,7 +255,7 @@ generic_secondary_common_init:
 	mtctr	r23
 	bctrl
 
-3:	LOAD_REG_ADDR(r3, spinning_secondaries) /* Decrement spinning_secondaries */
+3:	LOAD_REG_ADDR(r3, boot_cpu_count) /* Decrement boot_cpu_count */
 	lwarx	r4,0,r3
 	subi	r4,r4,1
 	stwcx.	r4,0,r3
@@ -425,7 +425,7 @@ _STATIC(__after_prom_start)
 	tovirt(r6,r6)			/* on booke, we already run at PAGE_OFFSET */
 #endif
 
-#ifdef CONFIG_CRASH_DUMP
+#ifdef CONFIG_RELOCATABLE
 /*
  * Check if the kernel has to be running as relocatable kernel based on the
  * variable __run_at_load, if it is set the kernel is treated as relocatable

@@ -26,7 +26,6 @@
  *   LAN9215, LAN9216, LAN9217, LAN9218
  *   LAN9210, LAN9211
  *   LAN9220, LAN9221
- *   LAN89218
  *
  */
 
@@ -38,7 +37,6 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -1085,10 +1083,8 @@ smsc911x_rx_counterrors(struct net_device *dev, unsigned int rxstat)
 
 /* Quickly dumps bad packets */
 static void
-smsc911x_rx_fastforward(struct smsc911x_data *pdata, unsigned int pktbytes)
+smsc911x_rx_fastforward(struct smsc911x_data *pdata, unsigned int pktwords)
 {
-	unsigned int pktwords = (pktbytes + NET_IP_ALIGN + 3) >> 2;
-
 	if (likely(pktwords >= 4)) {
 		unsigned int timeout = 500;
 		unsigned int val;
@@ -1152,7 +1148,7 @@ static int smsc911x_poll(struct napi_struct *napi, int budget)
 			continue;
 		}
 
-		skb = netdev_alloc_skb(dev, pktlength + NET_IP_ALIGN);
+		skb = netdev_alloc_skb(dev, pktwords << 2);
 		if (unlikely(!skb)) {
 			SMSC_WARN(pdata, rx_err,
 				  "Unable to allocate skb for rx packet");
@@ -1162,14 +1158,12 @@ static int smsc911x_poll(struct napi_struct *napi, int budget)
 			break;
 		}
 
-		skb->data = skb->head;
-		skb_reset_tail_pointer(skb);
+		pdata->ops->rx_readfifo(pdata,
+				 (unsigned int *)skb->data, pktwords);
 
 		/* Align IP on 16B boundary */
 		skb_reserve(skb, NET_IP_ALIGN);
 		skb_put(skb, pktlength - 4);
-		pdata->ops->rx_readfifo(pdata,
-				 (unsigned int *)skb->head, pktwords);
 		skb->protocol = eth_type_trans(skb, dev);
 		skb_checksum_none_assert(skb);
 		netif_receive_skb(skb);
@@ -1392,7 +1386,7 @@ static int smsc911x_open(struct net_device *dev)
 	smsc911x_reg_write(pdata, FIFO_INT, temp);
 
 	/* set RX Data offset to 2 bytes for alignment */
-	smsc911x_reg_write(pdata, RX_CFG, (2 << 8));
+	smsc911x_reg_write(pdata, RX_CFG, (NET_IP_ALIGN << 8));
 
 	/* enable NAPI polling before enabling RX interrupts */
 	napi_enable(&pdata->napi);
@@ -1475,7 +1469,6 @@ static int smsc911x_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	pdata->ops->tx_writefifo(pdata, (unsigned int *)bufp, wrsz);
 	freespace -= (skb->len + 32);
-	skb_tx_timestamp(skb);
 	dev_kfree_skb(skb);
 
 	if (unlikely(smsc911x_tx_get_txstatcount(pdata) >= 30))
@@ -1984,7 +1977,6 @@ static int __devinit smsc911x_init(struct net_device *dev)
 	case 0x01170000:
 	case 0x01160000:
 	case 0x01150000:
-	case 0x218A0000:
 		/* LAN911[5678] family */
 		pdata->generation = pdata->idrev & 0x0000FFFF;
 		break;

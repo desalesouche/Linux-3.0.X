@@ -122,7 +122,6 @@ static int ip_dev_loopback_xmit(struct sk_buff *newskb)
 	newskb->pkt_type = PACKET_LOOPBACK;
 	newskb->ip_summed = CHECKSUM_UNNECESSARY;
 	WARN_ON(!skb_dst(newskb));
-	skb_dst_force(newskb);
 	netif_rx_ni(newskb);
 	return 0;
 }
@@ -184,6 +183,7 @@ static inline int ip_finish_output2(struct sk_buff *skb)
 	struct net_device *dev = dst->dev;
 	unsigned int hh_len = LL_RESERVED_SPACE(dev);
 	struct neighbour *neigh;
+	int res;
 
 	if (rt->rt_type == RTN_MULTICAST) {
 		IP_UPD_PO_STATS(dev_net(dev), IPSTATS_MIB_OUTMCAST, skb->len);
@@ -206,14 +206,21 @@ static inline int ip_finish_output2(struct sk_buff *skb)
 	}
 
 	rcu_read_lock();
-	neigh = dst_get_neighbour(dst);
-	if (neigh) {
-		int res = neigh_output(neigh, skb);
+	if (dst->hh) {
+		int res = neigh_hh_output(dst->hh, skb);
 
 		rcu_read_unlock();
 		return res;
+	} else {
+		neigh = dst_get_neighbour(dst);
+		if (neigh) {
+			res = neigh->output(skb);
+
+			rcu_read_unlock();
+			return res;
+		}
+		rcu_read_unlock();
 	}
-	rcu_read_unlock();
 
 	if (net_ratelimit())
 		printk(KERN_DEBUG "ip_finish_output2: No header cache and no neighbour!\n");
@@ -496,7 +503,7 @@ int ip_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
 
 		if (first_len - hlen > mtu ||
 		    ((first_len - hlen) & 7) ||
-		    ip_is_fragment(iph) ||
+		    (iph->frag_off & htons(IP_MF|IP_OFFSET)) ||
 		    skb_cloned(skb))
 			goto slow_path;
 

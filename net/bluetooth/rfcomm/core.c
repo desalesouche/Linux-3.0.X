@@ -62,6 +62,7 @@ static DEFINE_MUTEX(rfcomm_mutex);
 #define rfcomm_lock()	mutex_lock(&rfcomm_mutex)
 #define rfcomm_unlock()	mutex_unlock(&rfcomm_mutex)
 
+static unsigned long rfcomm_event;
 
 static LIST_HEAD(session_list);
 
@@ -119,6 +120,7 @@ static inline void rfcomm_schedule(void)
 {
 	if (!rfcomm_thread)
 		return;
+	set_bit(RFCOMM_SCHED_WAKEUP, &rfcomm_event);
 	wake_up_process(rfcomm_thread);
 }
 
@@ -2036,18 +2038,19 @@ static int rfcomm_run(void *unused)
 
 	rfcomm_add_listener(BDADDR_ANY);
 
-	while (1) {
+	while (!kthread_should_stop()) {
 		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (kthread_should_stop())
-			break;
+		if (!test_bit(RFCOMM_SCHED_WAKEUP, &rfcomm_event)) {
+			/* No pending events. Let's sleep.
+			 * Incoming connections and data will wake us up. */
+			schedule();
+		}
+		set_current_state(TASK_RUNNING);
 
 		/* Process stuff */
+		clear_bit(RFCOMM_SCHED_WAKEUP, &rfcomm_event);
 		rfcomm_process_sessions();
-
-		schedule();
 	}
-	__set_current_state(TASK_RUNNING);
 
 	rfcomm_kill_listener();
 
