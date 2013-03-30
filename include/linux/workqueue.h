@@ -10,7 +10,7 @@
 #include <linux/bitops.h>
 #include <linux/lockdep.h>
 #include <linux/threads.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct workqueue_struct;
 
@@ -255,7 +255,7 @@ enum {
 	WQ_HIGHPRI		= 1 << 4, /* high priority */
 	WQ_CPU_INTENSIVE	= 1 << 5, /* cpu instensive workqueue */
 
-	WQ_DRAINING		= 1 << 6, /* internal: workqueue is draining */
+	WQ_DYING		= 1 << 6, /* internal: workqueue is dying */
 	WQ_RESCUER		= 1 << 7, /* internal: workqueue has rescuer */
 
 	WQ_MAX_ACTIVE		= 512,	  /* I like 512, better ideas? */
@@ -289,12 +289,16 @@ enum {
  *
  * system_freezable_wq is equivalent to system_wq except that it's
  * freezable.
+ *
+ * system_nrt_freezable_wq is equivalent to system_nrt_wq except that
+ * it's freezable.
  */
 extern struct workqueue_struct *system_wq;
 extern struct workqueue_struct *system_long_wq;
 extern struct workqueue_struct *system_nrt_wq;
 extern struct workqueue_struct *system_unbound_wq;
 extern struct workqueue_struct *system_freezable_wq;
+extern struct workqueue_struct *system_nrt_freezable_wq;
 
 extern struct workqueue_struct *
 __alloc_workqueue_key(const char *name, unsigned int flags, int max_active,
@@ -355,7 +359,6 @@ extern int queue_delayed_work_on(int cpu, struct workqueue_struct *wq,
 			struct delayed_work *work, unsigned long delay);
 
 extern void flush_workqueue(struct workqueue_struct *wq);
-extern void drain_workqueue(struct workqueue_struct *wq);
 extern void flush_scheduled_work(void);
 
 extern int schedule_work(struct work_struct *work);
@@ -381,7 +384,7 @@ extern void workqueue_set_max_active(struct workqueue_struct *wq,
 extern bool workqueue_congested(unsigned int cpu, struct workqueue_struct *wq);
 extern unsigned int work_cpu(struct work_struct *work);
 extern unsigned int work_busy(struct work_struct *work);
-
+extern int print_workqueue(void);
 /*
  * Kill off a pending schedule_delayed_work().  Note that the work callback
  * function may still be running on return from cancel_delayed_work(), unless
@@ -411,6 +414,21 @@ static inline bool __cancel_delayed_work(struct delayed_work *work)
 	if (ret)
 		work_clear_pending(&work->work);
 	return ret;
+}
+
+/* Obsolete. use cancel_delayed_work_sync() */
+static inline __deprecated
+void cancel_rearming_delayed_workqueue(struct workqueue_struct *wq,
+					struct delayed_work *work)
+{
+	cancel_delayed_work_sync(work);
+}
+
+/* Obsolete. use cancel_delayed_work_sync() */
+static inline __deprecated
+void cancel_rearming_delayed_work(struct delayed_work *work)
+{
+	cancel_delayed_work_sync(work);
 }
 
 #ifndef CONFIG_SMP

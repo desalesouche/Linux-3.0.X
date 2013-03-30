@@ -62,6 +62,7 @@
 #include <asm/reboot.h>
 #include <asm/stackprotector.h>
 #include <asm/hypervisor.h>
+#include <asm/pci_x86.h>
 
 #include "xen-ops.h"
 #include "mmu.h"
@@ -341,8 +342,6 @@ static void xen_set_ldt(const void *addr, unsigned entries)
 	struct mmuext_op *op;
 	struct multicall_space mcs = xen_mc_entry(sizeof(*op));
 
-	trace_xen_cpu_set_ldt(addr, entries);
-
 	op = mcs.args;
 	op->cmd = MMUEXT_SET_LDT;
 	op->arg1.linear_addr = (unsigned long)addr;
@@ -498,8 +497,6 @@ static void xen_write_ldt_entry(struct desc_struct *dt, int entrynum,
 	xmaddr_t mach_lp = arbitrary_virt_to_machine(&dt[entrynum]);
 	u64 entry = *(u64 *)ptr;
 
-	trace_xen_cpu_write_ldt_entry(dt, entrynum, entry);
-
 	preempt_disable();
 
 	xen_mc_flush();
@@ -569,8 +566,6 @@ static void xen_write_idt_entry(gate_desc *dt, int entrynum, const gate_desc *g)
 	unsigned long p = (unsigned long)&dt[entrynum];
 	unsigned long start, end;
 
-	trace_xen_cpu_write_idt_entry(dt, entrynum, g);
-
 	preempt_disable();
 
 	start = __this_cpu_read(idt_desc.address);
@@ -625,8 +620,6 @@ static void xen_load_idt(const struct desc_ptr *desc)
 	static DEFINE_SPINLOCK(lock);
 	static struct trap_info traps[257];
 
-	trace_xen_cpu_load_idt(desc);
-
 	spin_lock(&lock);
 
 	__get_cpu_var(idt_desc) = *desc;
@@ -645,8 +638,6 @@ static void xen_load_idt(const struct desc_ptr *desc)
 static void xen_write_gdt_entry(struct desc_struct *dt, int entry,
 				const void *desc, int type)
 {
-	trace_xen_cpu_write_gdt_entry(dt, entry, desc, type);
-
 	preempt_disable();
 
 	switch (type) {
@@ -675,8 +666,6 @@ static void xen_write_gdt_entry(struct desc_struct *dt, int entry,
 static void __init xen_write_gdt_entry_boot(struct desc_struct *dt, int entry,
 					    const void *desc, int type)
 {
-	trace_xen_cpu_write_gdt_entry(dt, entry, desc, type);
-
 	switch (type) {
 	case DESC_LDT:
 	case DESC_TSS:
@@ -696,9 +685,7 @@ static void __init xen_write_gdt_entry_boot(struct desc_struct *dt, int entry,
 static void xen_load_sp0(struct tss_struct *tss,
 			 struct thread_struct *thread)
 {
-	struct multicall_space mcs;
-
-	mcs = xen_mc_entry(0);
+	struct multicall_space mcs = xen_mc_entry(0);
 	MULTI_stack_switch(mcs.mc, __KERNEL_DS, thread->sp0);
 	xen_mc_issue(PARAVIRT_LAZY_CPU);
 }
@@ -808,7 +795,16 @@ static void xen_write_cr4(unsigned long cr4)
 
 	native_write_cr4(cr4);
 }
-
+#ifdef CONFIG_X86_64
+static inline unsigned long xen_read_cr8(void)
+{
+	return 0;
+}
+static inline void xen_write_cr8(unsigned long val)
+{
+	BUG_ON(val);
+}
+#endif
 static int xen_write_msr_safe(unsigned int msr, unsigned low, unsigned high)
 {
 	int ret;
@@ -951,10 +947,6 @@ static const struct pv_info xen_info __initconst = {
 	.paravirt_enabled = 1,
 	.shared_kernel_pmd = 0,
 
-#ifdef CONFIG_X86_64
-	.extra_user_64bit_cs = FLAT_USER_CS64,
-#endif
-
 	.name = "Xen",
 };
 
@@ -977,12 +969,19 @@ static const struct pv_cpu_ops xen_cpu_ops __initconst = {
 	.read_cr4_safe = native_read_cr4_safe,
 	.write_cr4 = xen_write_cr4,
 
+#ifdef CONFIG_X86_64
+	.read_cr8 = xen_read_cr8,
+	.write_cr8 = xen_write_cr8,
+#endif
+
 	.wbinvd = native_wbinvd,
 
 	.read_msr = native_read_msr_safe,
 	.write_msr = xen_write_msr_safe,
 	.read_tsc = native_read_tsc,
 	.read_pmc = native_read_pmc,
+
+	.read_tscp = native_read_tscp,
 
 	.iret = xen_iret,
 	.irq_enable_sysexit = xen_sysexit,

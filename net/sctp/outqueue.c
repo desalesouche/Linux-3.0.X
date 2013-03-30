@@ -223,7 +223,7 @@ void sctp_outq_init(struct sctp_association *asoc, struct sctp_outq *q)
 
 /* Free the outqueue structure and any related pending chunks.
  */
-void sctp_outq_teardown(struct sctp_outq *q)
+static void __sctp_outq_teardown(struct sctp_outq *q)
 {
 	struct sctp_transport *transport;
 	struct list_head *lchunk, *temp;
@@ -276,8 +276,6 @@ void sctp_outq_teardown(struct sctp_outq *q)
 		sctp_chunk_free(chunk);
 	}
 
-	q->error = 0;
-
 	/* Throw away any leftover control chunks. */
 	list_for_each_entry_safe(chunk, tmp, &q->control_chunk_list, list) {
 		list_del_init(&chunk->list);
@@ -285,11 +283,17 @@ void sctp_outq_teardown(struct sctp_outq *q)
 	}
 }
 
+void sctp_outq_teardown(struct sctp_outq *q)
+{
+	__sctp_outq_teardown(q);
+	sctp_outq_init(q->asoc, q);
+}
+
 /* Free the outqueue structure and any related pending chunks.  */
 void sctp_outq_free(struct sctp_outq *q)
 {
 	/* Throw away leftover chunks. */
-	sctp_outq_teardown(q);
+	__sctp_outq_teardown(q);
 
 	/* If we were kmalloc()'d, free the memory.  */
 	if (q->malloced)
@@ -752,16 +756,6 @@ static int sctp_outq_flush(struct sctp_outq *q, int rtx_timeout)
 	 */
 
 	list_for_each_entry_safe(chunk, tmp, &q->control_chunk_list, list) {
-		/* RFC 5061, 5.3
-		 * F1) This means that until such time as the ASCONF
-		 * containing the add is acknowledged, the sender MUST
-		 * NOT use the new IP address as a source for ANY SCTP
-		 * packet except on carrying an ASCONF Chunk.
-		 */
-		if (asoc->src_out_of_asoc_ok &&
-		    chunk->chunk_hdr->type != SCTP_CID_ASCONF)
-			continue;
-
 		list_del_init(&chunk->list);
 
 		/* Pick the right transport to use. */
@@ -888,9 +882,6 @@ static int sctp_outq_flush(struct sctp_outq *q, int rtx_timeout)
 			BUG();
 		}
 	}
-
-	if (q->asoc->src_out_of_asoc_ok)
-		goto sctp_flush_out;
 
 	/* Is it OK to send data chunks?  */
 	switch (asoc->state) {

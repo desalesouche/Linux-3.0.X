@@ -71,16 +71,8 @@
  * crap here - that's what the boot loader (or in extreme, well justified
  * circumstances, zImage) is for.
  */
-	.arm
-
 	__HEAD
 ENTRY(stext)
-
- THUMB(	adr	r9, BSYM(1f)	)	@ Kernel is always entered in ARM.
- THUMB(	bx	r9		)	@ If this is a Thumb-2 kernel,
- THUMB(	.thumb			)	@ switch to Thumb now.
- THUMB(1:			)
-
 	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9 @ ensure svc mode
 						@ and irqs disabled
 	mrc	p15, 0, r9, c0, c0		@ get processor id
@@ -357,7 +349,7 @@ __secondary_data:
  */
 __enable_mmu:
 #if defined(CONFIG_ALIGNMENT_TRAP) && __LINUX_ARM_ARCH__ < 6
-	orr	r0, r0, #CR_A
+      orr     r0, r0, #CR_A
 #else
 	bic	r0, r0, #CR_A
 #endif
@@ -370,10 +362,17 @@ __enable_mmu:
 #ifdef CONFIG_CPU_ICACHE_DISABLE
 	bic	r0, r0, #CR_I
 #endif
-	mov	r5, #(domain_val(DOMAIN_USER, DOMAIN_MANAGER) | \
-		      domain_val(DOMAIN_KERNEL, DOMAIN_MANAGER) | \
-		      domain_val(DOMAIN_TABLE, DOMAIN_MANAGER) | \
+#ifdef CONFIG_EMULATE_DOMAIN_MANAGER_V7
+	mov	r5, #(domain_val(DOMAIN_USER, DOMAIN_CLIENT) | \
+		      domain_val(DOMAIN_KERNEL, DOMAIN_CLIENT) | \
+		      domain_val(DOMAIN_TABLE, DOMAIN_CLIENT) | \
 		      domain_val(DOMAIN_IO, DOMAIN_CLIENT))
+#else
+	mov	r5, #(domain_val(DOMAIN_USER, DOMAIN_CLIENT) | \
+		      domain_val(DOMAIN_KERNEL, DOMAIN_MANAGER) | \
+		      domain_val(DOMAIN_TABLE, DOMAIN_CLIENT) | \
+		      domain_val(DOMAIN_IO, DOMAIN_CLIENT))
+#endif
 	mcr	p15, 0, r5, c3, c0, 0		@ load domain access register
 	mcr	p15, 0, r4, c2, c0, 0		@ load page table pointer
 	b	__turn_mmu_on

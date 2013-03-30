@@ -185,6 +185,7 @@ static void reset_buffer_flags(struct tty_struct *tty)
 	tty->canon_head = tty->canon_data = tty->erasing = 0;
 	memset(&tty->read_flags, 0, sizeof tty->read_flags);
 	n_tty_set_room(tty);
+	check_unthrottle(tty);
 }
 
 /**
@@ -1417,6 +1418,8 @@ static void n_tty_receive_buf(struct tty_struct *tty, const unsigned char *cp,
 			tty->ops->flush_chars(tty);
 	}
 
+	if (tty->is_rcvlock)
+		mutex_lock(&tty->rcv_room_lock);
 	n_tty_set_room(tty);
 
 	if ((!tty->icanon && (tty->read_cnt >= tty->minimum_to_wake)) ||
@@ -1433,6 +1436,14 @@ static void n_tty_receive_buf(struct tty_struct *tty, const unsigned char *cp,
 	 */
 	if (tty->receive_room < TTY_THRESHOLD_THROTTLE)
 		tty_throttle(tty);
+	if (tty->is_rcvlock)
+		mutex_unlock(&tty->rcv_room_lock);
+
+	if (!tty->receive_room && !tty->read_cnt) {
+		printk(KERN_ERR "%s, name:%s read_cnt=rcv_room=0!\n",
+			__func__, tty->name);
+		n_tty_set_room(tty);
+	}
 }
 
 int is_ignored(int sig)
@@ -1586,7 +1597,6 @@ static int n_tty_open(struct tty_struct *tty)
 			return -ENOMEM;
 	}
 	reset_buffer_flags(tty);
-	tty_unthrottle(tty);
 	tty->column = 0;
 	n_tty_set_termios(tty, NULL);
 	tty->minimum_to_wake = 1;
@@ -1728,7 +1738,8 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file,
 
 do_it_again:
 
-	BUG_ON(!tty->read_buf);
+	if (WARN_ON(!tty->read_buf))
+		return -EAGAIN;
 
 	c = job_control(tty, file);
 	if (c < 0)
@@ -1887,8 +1898,14 @@ do_it_again:
 		 * we won't get any more characters.
 		 */
 		if (n_tty_chars_in_buffer(tty) <= TTY_THRESHOLD_UNTHROTTLE) {
+			if (tty->is_rcvlock)
+				mutex_lock(&tty->rcv_room_lock);
+
 			n_tty_set_room(tty);
 			check_unthrottle(tty);
+
+			if (tty->is_rcvlock)
+				mutex_unlock(&tty->rcv_room_lock);
 		}
 
 		if (b - buf >= minimum)
@@ -1911,7 +1928,12 @@ do_it_again:
 	} else if (test_and_clear_bit(TTY_PUSH, &tty->flags))
 		 goto do_it_again;
 
+	if (tty->is_rcvlock)
+		mutex_lock(&tty->rcv_room_lock);
 	n_tty_set_room(tty);
+	if (tty->is_rcvlock)
+		mutex_unlock(&tty->rcv_room_lock);
+
 	return retval;
 }
 

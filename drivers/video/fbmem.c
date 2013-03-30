@@ -729,7 +729,7 @@ static struct fb_info *file_fb_info(struct file *file)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
 	int fbidx = iminor(inode);
-	struct fb_info *info = registered_fb[fbidx];
+	struct fb_info *info = (fbidx < FB_MAX) ? registered_fb[fbidx] : NULL;
 
 	if (info != file->private_data)
 		info = NULL;
@@ -1143,7 +1143,7 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			return -EFAULT;
 		if (con2fb.console < 1 || con2fb.console > MAX_NR_CONSOLES)
 			return -EINVAL;
-		if (con2fb.framebuffer < 0 || con2fb.framebuffer >= FB_MAX)
+		if (/*con2fb.framebuffer < 0 || */con2fb.framebuffer >= FB_MAX)
 			return -EINVAL;
 		if (!registered_fb[con2fb.framebuffer])
 			request_module("fb%d", con2fb.framebuffer);
@@ -1169,14 +1169,11 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		unlock_fb_info(info);
 		break;
 	default:
-		if (!lock_fb_info(info))
-			return -ENODEV;
 		fb = info->fbops;
 		if (fb->fb_ioctl)
 			ret = fb->fb_ioctl(info, cmd, arg);
 		else
 			ret = -ENOTTY;
-		unlock_fb_info(info);
 	}
 	return ret;
 }
@@ -1586,6 +1583,9 @@ static int do_register_framebuffer(struct fb_info *fb_info)
 	for (i = 0 ; i < FB_MAX; i++)
 		if (!registered_fb[i])
 			break;
+	if (i == FB_MAX)
+		return -ENXIO;
+
 	fb_info->node = i;
 	atomic_set(&fb_info->count, 1);
 	mutex_init(&fb_info->lock);
@@ -1628,7 +1628,9 @@ static int do_register_framebuffer(struct fb_info *fb_info)
 	event.info = fb_info;
 	if (!lock_fb_info(fb_info))
 		return -ENODEV;
+	console_lock();
 	fb_notifier_call_chain(FB_EVENT_FB_REGISTERED, &event);
+	console_unlock();
 	unlock_fb_info(fb_info);
 	return 0;
 }
@@ -1644,13 +1646,16 @@ static int do_unregister_framebuffer(struct fb_info *fb_info)
 
 	if (!lock_fb_info(fb_info))
 		return -ENODEV;
+	console_lock();
 	event.info = fb_info;
 	ret = fb_notifier_call_chain(FB_EVENT_FB_UNBIND, &event);
+	console_unlock();
 	unlock_fb_info(fb_info);
 
 	if (ret)
 		return -EINVAL;
 
+	unlink_framebuffer(fb_info);
 	if (fb_info->pixmap.addr &&
 	    (fb_info->pixmap.flags & FB_PIXMAP_DEFAULT))
 		kfree(fb_info->pixmap.addr);
@@ -1658,14 +1663,31 @@ static int do_unregister_framebuffer(struct fb_info *fb_info)
 	registered_fb[i] = NULL;
 	num_registered_fb--;
 	fb_cleanup_device(fb_info);
-	device_destroy(fb_class, MKDEV(FB_MAJOR, i));
 	event.info = fb_info;
+	console_lock();
 	fb_notifier_call_chain(FB_EVENT_FB_UNREGISTERED, &event);
+	console_unlock();
 
 	/* this may free fb info */
 	put_fb_info(fb_info);
 	return 0;
 }
+
+int unlink_framebuffer(struct fb_info *fb_info)
+{
+	int i;
+
+	i = fb_info->node;
+	if (i < 0 || i >= FB_MAX || registered_fb[i] != fb_info)
+		return -EINVAL;
+
+	if (fb_info->dev) {
+		device_destroy(fb_class, MKDEV(FB_MAJOR, i));
+		fb_info->dev = NULL;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(unlink_framebuffer);
 
 void remove_conflicting_framebuffers(struct apertures_struct *a,
 				     const char *name, bool primary)
@@ -1815,11 +1837,8 @@ int fb_new_modelist(struct fb_info *info)
 	err = 1;
 
 	if (!list_empty(&info->modelist)) {
-		if (!lock_fb_info(info))
-			return -ENODEV;
 		event.info = info;
 		err = fb_notifier_call_chain(FB_EVENT_NEW_MODELIST, &event);
-		unlock_fb_info(info);
 	}
 
 	return err;

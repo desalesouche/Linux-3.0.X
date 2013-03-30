@@ -43,6 +43,9 @@
 
 #include <linux/kthread.h>
 #include <linux/freezer.h>
+#ifdef CONFIG_EXT4_E2FSCK_RECOVER
+#include <linux/reboot.h>
+#endif
 
 #include "ext4.h"
 #include "ext4_jbd2.h"
@@ -83,6 +86,10 @@ static void ext4_destroy_lazyinit_thread(void);
 static void ext4_unregister_li_request(struct super_block *sb);
 static void ext4_clear_request_list(void);
 
+#ifdef CONFIG_EXT4_E2FSCK_RECOVER
+int ext4_debug_level = 0;
+#endif
+
 #if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
 static struct file_system_type ext2_fs_type = {
 	.owner		= THIS_MODULE,
@@ -109,35 +116,6 @@ static struct file_system_type ext3_fs_type = {
 #else
 #define IS_EXT3_SB(sb) (0)
 #endif
-
-void *ext4_kvmalloc(size_t size, gfp_t flags)
-{
-	void *ret;
-
-	ret = kmalloc(size, flags);
-	if (!ret)
-		ret = __vmalloc(size, flags, PAGE_KERNEL);
-	return ret;
-}
-
-void *ext4_kvzalloc(size_t size, gfp_t flags)
-{
-	void *ret;
-
-	ret = kzalloc(size, flags);
-	if (!ret)
-		ret = __vmalloc(size, flags | __GFP_ZERO, PAGE_KERNEL);
-	return ret;
-}
-
-void ext4_kvfree(void *ptr)
-{
-	if (is_vmalloc_addr(ptr))
-		vfree(ptr);
-	else
-		kfree(ptr);
-
-}
 
 ext4_fsblk_t ext4_block_bitmap(struct super_block *sb,
 			       struct ext4_group_desc *bg)
@@ -298,7 +276,6 @@ handle_t *ext4_journal_start_sb(struct super_block *sb, int nblocks)
 	journal_t *journal;
 	handle_t  *handle;
 
-	trace_ext4_journal_start(sb, nblocks, _RET_IP_);
 	if (sb->s_flags & MS_RDONLY)
 		return ERR_PTR(-EROFS);
 
@@ -449,6 +426,11 @@ static void ext4_handle_error(struct super_block *sb)
 	if (test_opt(sb, ERRORS_PANIC))
 		panic("EXT4-fs (device %s): panic forced after error\n",
 			sb->s_id);
+
+#ifdef CONFIG_EXT4_E2FSCK_RECOVER
+	if (!ext4_debug_level && test_opt(sb, ERRORS_RO))
+		ext4_e2fsck(sb);
+#endif
 }
 
 void __ext4_error(struct super_block *sb, const char *function,
@@ -463,9 +445,46 @@ void __ext4_error(struct super_block *sb, const char *function,
 	printk(KERN_CRIT "EXT4-fs error (device %s): %s:%d: comm %s: %pV\n",
 	       sb->s_id, function, line, current->comm, &vaf);
 	va_end(args);
+	save_error_info(sb, function, line);
 
 	ext4_handle_error(sb);
 }
+
+#ifdef CONFIG_EXT4_E2FSCK_RECOVER
+static void ext4_reboot(struct work_struct *work)
+{
+	printk(KERN_ERR "%s: reboot to run e2fsck\n", __func__);
+	kernel_restart("oem-22");
+}
+
+void ext4_e2fsck(struct super_block *sb)
+{
+	static int reboot;
+	struct workqueue_struct *wq;
+	struct ext4_sb_info *sb_info;
+	if (reboot)
+		return;
+	printk(KERN_ERR "%s\n", __func__);
+	reboot = 1;
+	sb_info = EXT4_SB(sb);
+	if (!sb_info) {
+		printk(KERN_ERR "%s: no sb_info\n", __func__);
+		reboot = 0;
+		return;
+	}
+	sb_info->recover_wq = create_workqueue("ext4-recover");
+	if (!sb_info->recover_wq) {
+		printk(KERN_ERR "EXT4-fs: failed to create recover workqueue\n");
+		reboot = 0;
+		return;
+	}
+
+	INIT_WORK(&sb_info->reboot_work, ext4_reboot);
+	wq = sb_info->recover_wq;
+	/* queue the work to reboot */
+	queue_work(wq, &sb_info->reboot_work);
+}
+#endif
 
 void ext4_error_inode(struct inode *inode, const char *function,
 		      unsigned int line, ext4_fsblk_t block,
@@ -819,8 +838,11 @@ static void ext4_put_super(struct super_block *sb)
 
 	for (i = 0; i < sbi->s_gdb_count; i++)
 		brelse(sbi->s_group_desc[i]);
-	ext4_kvfree(sbi->s_group_desc);
-	ext4_kvfree(sbi->s_flex_groups);
+	kfree(sbi->s_group_desc);
+	if (is_vmalloc_addr(sbi->s_flex_groups))
+		vfree(sbi->s_flex_groups);
+	else
+		kfree(sbi->s_flex_groups);
 	percpu_counter_destroy(&sbi->s_freeblocks_counter);
 	percpu_counter_destroy(&sbi->s_freeinodes_counter);
 	percpu_counter_destroy(&sbi->s_dirs_counter);
@@ -886,6 +908,7 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 	ei->i_reserved_meta_blocks = 0;
 	ei->i_allocated_meta_blocks = 0;
 	ei->i_da_metadata_calc_len = 0;
+	ei->i_da_metadata_calc_last_lblock = 0;
 	spin_lock_init(&(ei->i_block_reservation_lock));
 #ifdef CONFIG_QUOTA
 	ei->i_reserved_quota = 0;
@@ -2000,11 +2023,15 @@ static int ext4_fill_flex_info(struct super_block *sb)
 			((le16_to_cpu(sbi->s_es->s_reserved_gdt_blocks) + 1) <<
 			      EXT4_DESC_PER_BLOCK_BITS(sb))) / groups_per_flex;
 	size = flex_group_count * sizeof(struct flex_groups);
-	sbi->s_flex_groups = ext4_kvzalloc(size, GFP_KERNEL);
+	sbi->s_flex_groups = kzalloc(size, GFP_KERNEL);
 	if (sbi->s_flex_groups == NULL) {
-		ext4_msg(sb, KERN_ERR, "not enough memory for %u flex groups",
-			 flex_group_count);
-		goto failed;
+		sbi->s_flex_groups = vzalloc(size);
+		if (sbi->s_flex_groups == NULL) {
+			ext4_msg(sb, KERN_ERR,
+				 "not enough memory for %u flex groups",
+				 flex_group_count);
+			goto failed;
+		}
 	}
 
 	for (i = 0; i < sbi->s_groups_count; i++) {
@@ -2225,7 +2252,9 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 				__func__, inode->i_ino, inode->i_size);
 			jbd_debug(2, "truncating inode %lu to %lld bytes\n",
 				  inode->i_ino, inode->i_size);
+			mutex_lock(&inode->i_mutex);
 			ext4_truncate(inode);
+			mutex_unlock(&inode->i_mutex);
 			nr_truncates++;
 		} else {
 			ext4_msg(sb, KERN_DEBUG,
@@ -2403,25 +2432,17 @@ static unsigned long ext4_get_stripe_size(struct ext4_sb_info *sbi)
 	unsigned long stride = le16_to_cpu(sbi->s_es->s_raid_stride);
 	unsigned long stripe_width =
 			le32_to_cpu(sbi->s_es->s_raid_stripe_width);
-	int ret;
 
 	if (sbi->s_stripe && sbi->s_stripe <= sbi->s_blocks_per_group)
-		ret = sbi->s_stripe;
-	else if (stripe_width <= sbi->s_blocks_per_group)
-		ret = stripe_width;
-	else if (stride <= sbi->s_blocks_per_group)
-		ret = stride;
-	else
-		ret = 0;
+		return sbi->s_stripe;
 
-	/*
-	 * If the stripe width is 1, this makes no sense and
-	 * we set it to 0 to turn off stripe handling code.
-	 */
-	if (ret <= 1)
-		ret = 0;
+	if (stripe_width <= sbi->s_blocks_per_group)
+		return stripe_width;
 
-	return ret;
+	if (stride <= sbi->s_blocks_per_group)
+		return stride;
+
+	return 0;
 }
 
 /* sysfs supprt */
@@ -3343,7 +3364,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_inodes_per_block = blocksize / EXT4_INODE_SIZE(sb);
 	if (sbi->s_inodes_per_block == 0)
 		goto cantfind_ext4;
-	sbi->s_itb_per_group = sbi->s_inodes_per_group /
+	sbi->s_itb_per_group = (sbi->s_inodes_per_group + sbi->s_inodes_per_block - 1)/
 					sbi->s_inodes_per_block;
 	sbi->s_desc_per_block = blocksize / EXT4_DESC_SIZE(sb);
 	sbi->s_sbh = bh;
@@ -3436,9 +3457,8 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 			(EXT4_MAX_BLOCK_FILE_PHYS / EXT4_BLOCKS_PER_GROUP(sb)));
 	db_count = (sbi->s_groups_count + EXT4_DESC_PER_BLOCK(sb) - 1) /
 		   EXT4_DESC_PER_BLOCK(sb);
-	sbi->s_group_desc = ext4_kvmalloc(db_count *
-					  sizeof(struct buffer_head *),
-					  GFP_KERNEL);
+	sbi->s_group_desc = kmalloc(db_count * sizeof(struct buffer_head *),
+				    GFP_KERNEL);
 	if (sbi->s_group_desc == NULL) {
 		ext4_msg(sb, KERN_ERR, "not enough memory");
 		goto failed_mount;
@@ -3520,7 +3540,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 
 	INIT_LIST_HEAD(&sbi->s_orphan); /* unlinked but open files */
 	mutex_init(&sbi->s_orphan_lock);
-	sbi->s_resize_flags = 0;
+	mutex_init(&sbi->s_resize_lock);
 
 	sb->s_root = NULL;
 
@@ -3650,7 +3670,8 @@ no_journal:
 		goto failed_mount4;
 	}
 
-	ext4_setup_super(sb, es, sb->s_flags & MS_RDONLY);
+	if (ext4_setup_super(sb, es, sb->s_flags & MS_RDONLY))
+		sb->s_flags |= MS_RDONLY;
 
 	/* determine the minimum size of new large inodes, if present */
 	if (sbi->s_inode_size > EXT4_GOOD_OLD_INODE_SIZE) {
@@ -3708,22 +3729,19 @@ no_journal:
 	if (err) {
 		ext4_msg(sb, KERN_ERR, "failed to initialize mballoc (%d)",
 			 err);
-		goto failed_mount4;
+		goto failed_mount5;
 	}
 
 	err = ext4_register_li_request(sb, first_not_zeroed);
 	if (err)
-		goto failed_mount4;
+		goto failed_mount6;
 
 	sbi->s_kobj.kset = ext4_kset;
 	init_completion(&sbi->s_kobj_unregister);
 	err = kobject_init_and_add(&sbi->s_kobj, &ext4_ktype, NULL,
 				   "%s", sb->s_id);
-	if (err) {
-		ext4_mb_release(sb);
-		ext4_ext_release(sb);
-		goto failed_mount4;
-	};
+	if (err)
+		goto failed_mount7;
 
 	EXT4_SB(sb)->s_mount_state |= EXT4_ORPHAN_FS;
 	ext4_orphan_cleanup(sb, es);
@@ -3757,21 +3775,31 @@ cantfind_ext4:
 		ext4_msg(sb, KERN_ERR, "VFS: Can't find ext4 filesystem");
 	goto failed_mount;
 
+failed_mount7:
+	ext4_unregister_li_request(sb);
+failed_mount6:
+	ext4_ext_release(sb);
+failed_mount5:
+	ext4_mb_release(sb);
+	ext4_release_system_zone(sb);
 failed_mount4:
 	iput(root);
 	sb->s_root = NULL;
 	ext4_msg(sb, KERN_ERR, "mount failed");
 	destroy_workqueue(EXT4_SB(sb)->dio_unwritten_wq);
 failed_mount_wq:
-	ext4_release_system_zone(sb);
 	if (sbi->s_journal) {
 		jbd2_journal_destroy(sbi->s_journal);
 		sbi->s_journal = NULL;
 	}
 failed_mount3:
 	del_timer(&sbi->s_err_report);
-	if (sbi->s_flex_groups)
-		ext4_kvfree(sbi->s_flex_groups);
+	if (sbi->s_flex_groups) {
+		if (is_vmalloc_addr(sbi->s_flex_groups))
+			vfree(sbi->s_flex_groups);
+		else
+			kfree(sbi->s_flex_groups);
+	}
 	percpu_counter_destroy(&sbi->s_freeblocks_counter);
 	percpu_counter_destroy(&sbi->s_freeinodes_counter);
 	percpu_counter_destroy(&sbi->s_dirs_counter);
@@ -3781,7 +3809,7 @@ failed_mount3:
 failed_mount2:
 	for (i = 0; i < db_count; i++)
 		brelse(sbi->s_group_desc[i]);
-	ext4_kvfree(sbi->s_group_desc);
+	kfree(sbi->s_group_desc);
 failed_mount:
 	if (sbi->s_proc) {
 		remove_proc_entry(sb->s_id, ext4_proc_root);
@@ -4463,7 +4491,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	}
 
 	ext4_setup_system_zone(sb);
-	if (sbi->s_journal == NULL)
+	if (sbi->s_journal == NULL && !(old_sb_flags & MS_RDONLY))
 		ext4_commit_super(sb, 1);
 
 #ifdef CONFIG_QUOTA

@@ -10,37 +10,49 @@
 #include <linux/linkage.h>
 #include <linux/list.h>
 
+/* cannot include rcupdate.h here, so open-code this */
+
+#if defined(CONFIG_JRCU)
+# define __add_preempt_count(val) do { \
+	int newval = (preempt_count() += (val)); \
+	if (newval == (val)) \
+		smp_wmb(); \
+} while (0)
+#else
+# define __add_preempt_count(val) do { preempt_count() += (val); } while (0)
+#endif
+
+#if defined(CONFIG_JRCU_LAZY) || !defined(CONFIG_JRCU)
+# define __sub_preempt_count(val) do { preempt_count() -= (val); } while (0)
+#else
+# define __sub_preempt_count(val) do { \
+	int newval = (preempt_count() -= (val)); \
+	if (newval == 0) { \
+		/* race with preemption OK, preempt will do the mb for us */ \
+		smp_wmb(); \
+	} \
+} while (0)
+#endif
+
 #if defined(CONFIG_DEBUG_PREEMPT) || defined(CONFIG_PREEMPT_TRACER)
   extern void add_preempt_count(int val);
   extern void sub_preempt_count(int val);
 #else
-# define add_preempt_count(val)	do { preempt_count() += (val); } while (0)
-# define sub_preempt_count(val)	do { preempt_count() -= (val); } while (0)
+# define add_preempt_count(val) __add_preempt_count(val)
+# define sub_preempt_count(val) __sub_preempt_count(val)
 #endif
 
 #define inc_preempt_count() add_preempt_count(1)
 #define dec_preempt_count() sub_preempt_count(1)
 
 #define preempt_count()	(current_thread_info()->preempt_count)
+#ifdef CONFIG_PREEMPT_COUNT_CPU
+extern int preempt_count_cpu(int cpu);
+#endif
 
 #ifdef CONFIG_PREEMPT
 
 asmlinkage void preempt_schedule(void);
-
-#define preempt_check_resched() \
-do { \
-	if (unlikely(test_thread_flag(TIF_NEED_RESCHED))) \
-		preempt_schedule(); \
-} while (0)
-
-#else /* !CONFIG_PREEMPT */
-
-#define preempt_check_resched()		do { } while (0)
-
-#endif /* CONFIG_PREEMPT */
-
-
-#ifdef CONFIG_PREEMPT_COUNT
 
 #define preempt_disable() \
 do { \
@@ -52,6 +64,12 @@ do { \
 do { \
 	barrier(); \
 	dec_preempt_count(); \
+} while (0)
+
+#define preempt_check_resched() \
+do { \
+	if (unlikely(test_thread_flag(TIF_NEED_RESCHED))) \
+		preempt_schedule(); \
 } while (0)
 
 #define preempt_enable() \
@@ -89,17 +107,18 @@ do { \
 	preempt_check_resched(); \
 } while (0)
 
-#else /* !CONFIG_PREEMPT_COUNT */
+#else
 
 #define preempt_disable()		do { } while (0)
 #define preempt_enable_no_resched()	do { } while (0)
 #define preempt_enable()		do { } while (0)
+#define preempt_check_resched()		do { } while (0)
 
 #define preempt_disable_notrace()		do { } while (0)
 #define preempt_enable_no_resched_notrace()	do { } while (0)
 #define preempt_enable_notrace()		do { } while (0)
 
-#endif /* CONFIG_PREEMPT_COUNT */
+#endif
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 

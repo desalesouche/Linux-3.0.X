@@ -56,14 +56,6 @@
 
 #define FIELD_SIZEOF(t, f) (sizeof(((t*)0)->f))
 #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
-#define DIV_ROUND_UP_ULL(ll,d) \
-	({ unsigned long long _tmp = (ll)+(d)-1; do_div(_tmp, d); _tmp; })
-
-#if BITS_PER_LONG == 32
-# define DIV_ROUND_UP_SECTOR_T(ll,d) DIV_ROUND_UP_ULL(ll, d)
-#else
-# define DIV_ROUND_UP_SECTOR_T(ll,d) DIV_ROUND_UP(ll,d)
-#endif
 
 /* The `const' in roundup() prevents gcc-3.3 from calling __divdi3 */
 #define roundup(x, y) (					\
@@ -84,6 +76,19 @@
 	(((x) + ((__divisor) / 2)) / (__divisor));	\
 }							\
 )
+
+/*
+ * Multiplies an integer by a fraction, while avoiding unnecessary
+ * overflow or loss of precision.
+ */
+#define mult_frac(x, numer, denom)(			\
+{							\
+	typeof(x) quot = (x) / (denom);			\
+	typeof(x) rem  = (x) % (denom);			\
+	(quot * (numer)) + ((rem * (numer)) / (denom));	\
+}							\
+)
+
 
 #define _RET_IP_		(unsigned long)__builtin_return_address(0)
 #define _THIS_IP_  ({ __label__ __here; __here: (unsigned long)&&__here; })
@@ -122,14 +127,21 @@ struct completion;
 struct pt_regs;
 struct user;
 
+/* cannot bring in linux/rcupdate.h at this point */
+#ifdef CONFIG_JRCU
+extern void rcu_note_might_resched(void);
+#else
+#define rcu_note_might_resched()
+#endif /*JRCU */
+
 #ifdef CONFIG_PREEMPT_VOLUNTARY
 extern int _cond_resched(void);
-# define might_resched() _cond_resched()
+# define might_resched() do { _cond_resched(); rcu_note_might_resched(); } while (0)
 #else
-# define might_resched() do { } while (0)
+# define might_resched() do { rcu_note_might_resched(); } while (0)
 #endif
 
-#ifdef CONFIG_DEBUG_ATOMIC_SLEEP
+#ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
   void __might_sleep(const char *file, int line, int preempt_offset);
 /**
  * might_sleep - annotation for functions that can sleep
@@ -296,6 +308,8 @@ extern long long simple_strtoll(const char *,char **,unsigned int);
 #define strict_strtoull	kstrtoull
 #define strict_strtoll	kstrtoll
 
+extern int num_to_str(char *buf, int size, unsigned long long num);
+
 extern int sprintf(char * buf, const char * fmt, ...)
 	__attribute__ ((format (printf, 2, 3)));
 extern int vsprintf(char *buf, const char *, va_list)
@@ -384,6 +398,16 @@ static inline char *pack_hex_byte(char *buf, u8 byte)
 extern int hex_to_bin(char ch);
 extern void hex2bin(u8 *dst, const char *src, size_t count);
 
+#define pr_aud_fmt(fmt) "[AUD] " KBUILD_MODNAME ": " fmt
+#define pr_aud_fmt1(fmt) "[AUD]" fmt
+#define pr_aud_err(fmt, ...) \
+			printk(KERN_ERR pr_aud_fmt(fmt), ##__VA_ARGS__)
+#define pr_aud_err1(fmt, ...) \
+			printk(KERN_ERR pr_aud_fmt1(fmt), ##__VA_ARGS__)
+#define pr_aud_info(fmt, ...) \
+			printk(KERN_INFO pr_aud_fmt(fmt), ##__VA_ARGS__)
+#define pr_aud_info1(fmt, ...) \
+			printk(KERN_INFO pr_aud_fmt1(fmt), ##__VA_ARGS__)
 /*
  * General tracing related utility functions - trace_printk(),
  * tracing_on/tracing_off and tracing_start()/tracing_stop
@@ -654,6 +678,29 @@ static inline void ftrace_dump(enum ftrace_dump_mode oops_dump_mode) { }
 	const typeof( ((type *)0)->member ) *__mptr = (ptr);	\
 	(type *)( (char *)__mptr - offsetof(type,member) );})
 
+struct sysinfo;
+extern int do_sysinfo(struct sysinfo *info);
+
+#endif /* __KERNEL__ */
+
+#define SI_LOAD_SHIFT	16
+struct sysinfo {
+	long uptime;			/* Seconds since boot */
+	unsigned long loads[3];		/* 1, 5, and 15 minute load averages */
+	unsigned long totalram;		/* Total usable main memory size */
+	unsigned long freeram;		/* Available memory size */
+	unsigned long sharedram;	/* Amount of shared memory */
+	unsigned long bufferram;	/* Memory used by buffers */
+	unsigned long totalswap;	/* Total swap space size */
+	unsigned long freeswap;		/* swap space still available */
+	unsigned short procs;		/* Number of current processes */
+	unsigned short pad;		/* explicit padding for m68k */
+	unsigned long totalhigh;	/* Total high memory size */
+	unsigned long freehigh;		/* Available high memory size */
+	unsigned int mem_unit;		/* Memory unit size in bytes */
+	char _f[20-2*sizeof(long)-sizeof(int)];	/* Padding: libc5 uses this.. */
+};
+
 #ifdef __CHECKER__
 #define BUILD_BUG_ON_NOT_POWER_OF_2(n)
 #define BUILD_BUG_ON_ZERO(e) (0)
@@ -721,27 +768,7 @@ extern int __build_bug_on_failed;
 # define REBUILD_DUE_TO_FTRACE_MCOUNT_RECORD
 #endif
 
-struct sysinfo;
-extern int do_sysinfo(struct sysinfo *info);
-
-#endif /* __KERNEL__ */
-
-#define SI_LOAD_SHIFT	16
-struct sysinfo {
-	long uptime;			/* Seconds since boot */
-	unsigned long loads[3];		/* 1, 5, and 15 minute load averages */
-	unsigned long totalram;		/* Total usable main memory size */
-	unsigned long freeram;		/* Available memory size */
-	unsigned long sharedram;	/* Amount of shared memory */
-	unsigned long bufferram;	/* Memory used by buffers */
-	unsigned long totalswap;	/* Total swap space size */
-	unsigned long freeswap;		/* swap space still available */
-	unsigned short procs;		/* Number of current processes */
-	unsigned short pad;		/* explicit padding for m68k */
-	unsigned long totalhigh;	/* Total high memory size */
-	unsigned long freehigh;		/* Available high memory size */
-	unsigned int mem_unit;		/* Memory unit size in bytes */
-	char _f[20-2*sizeof(long)-sizeof(int)];	/* Padding: libc5 uses this.. */
-};
+/* To identify board information in panic logs, set this */
+extern char *mach_panic_string;
 
 #endif

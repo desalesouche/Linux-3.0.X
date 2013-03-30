@@ -122,7 +122,7 @@ struct gs_port {
 };
 
 /* increase N_PORTS if you need more */
-#define N_PORTS		4
+#define N_PORTS		8
 static struct portmaster {
 	struct mutex	lock;			/* protect open/close */
 	struct gs_port	*port;
@@ -1028,7 +1028,7 @@ static const struct tty_operations gs_tty_ops = {
 
 static struct tty_driver *gs_tty_driver;
 
-static int __init
+static int
 gs_port_alloc(unsigned port_num, struct usb_cdc_line_coding *coding)
 {
 	struct gs_port	*port;
@@ -1074,7 +1074,7 @@ gs_port_alloc(unsigned port_num, struct usb_cdc_line_coding *coding)
  *
  * Returns negative errno or zero.
  */
-int __init gserial_setup(struct usb_gadget *g, unsigned count)
+int gserial_setup(struct usb_gadget *g, unsigned count)
 {
 	unsigned			i;
 	struct usb_cdc_line_coding	coding;
@@ -1247,12 +1247,12 @@ int gserial_connect(struct gserial *gser, u8 port_num)
 	port = ports[port_num].port;
 
 	/* activate the endpoints */
-	status = usb_ep_enable(gser->in);
+	status = usb_ep_enable(gser->in, gser->in_desc);
 	if (status < 0)
 		return status;
 	gser->in->driver_data = port;
 
-	status = usb_ep_enable(gser->out);
+	status = usb_ep_enable(gser->out, gser->out_desc);
 	if (status < 0)
 		goto fail_out;
 	gser->out->driver_data = port;

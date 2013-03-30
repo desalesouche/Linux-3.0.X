@@ -21,8 +21,10 @@
  *          15 May 2002
  */
 
-#ifndef LINUX_MMC_MMC_H
-#define LINUX_MMC_MMC_H
+#ifndef MMC_MMC_H
+#define MMC_MMC_H
+
+#define EXT_CSD_CMD_SET_ZERO		0
 
 /* Standard MMC commands (4.1)           type  argument     response */
    /* class 1 */
@@ -221,6 +223,7 @@ struct _mmc_csd {
  * OCR bits are mostly in host.h
  */
 #define MMC_CARD_BUSY	0x80000000	/* Card Power up status bit */
+#define MMC_CARD_SECTOR_ADDR 0x40000000 /* Card supports sectors */
 
 /*
  * Card Command Classes (CCC)
@@ -278,6 +281,7 @@ struct _mmc_csd {
 #define EXT_CSD_ERASED_MEM_CONT		181	/* RO */
 #define EXT_CSD_BUS_WIDTH		183	/* R/W */
 #define EXT_CSD_HS_TIMING		185	/* R/W */
+#define EXT_CSD_POWER_CLASS 187        /* R/W */
 #define EXT_CSD_REV			192	/* RO */
 #define EXT_CSD_STRUCTURE		194	/* RO */
 #define EXT_CSD_CARD_TYPE		196	/* RO */
@@ -337,4 +341,5 @@ struct _mmc_csd {
 #define MMC_SWITCH_MODE_CLEAR_BITS	0x02	/* Clear bits which are 1 in value */
 #define MMC_SWITCH_MODE_WRITE_BYTE	0x03	/* Set target to value */
 
-#endif /* LINUX_MMC_MMC_H */
+#endif  /* MMC_MMC_PROTOCOL_H */
+

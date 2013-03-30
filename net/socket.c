@@ -467,7 +467,7 @@ static struct socket *sock_alloc(void)
 	struct inode *inode;
 	struct socket *sock;
 
-	inode = new_inode_pseudo(sock_mnt->mnt_sb);
+	inode = new_inode(sock_mnt->mnt_sb);
 	if (!inode)
 		return NULL;
 
@@ -509,8 +509,15 @@ const struct file_operations bad_sock_fops = {
  *	an inode not a file.
  */
 
+int add_or_remove_port(struct sock *sk, int add_or_remove);	/* SSD_RIL: Garbage_Filter_TCP */
+
 void sock_release(struct socket *sock)
 {
+	/* ++SSD_RIL: Garbage_Filter_TCP */
+	if (sock->sk != NULL)
+		add_or_remove_port(sock->sk, 0);
+	/* --SSD_RIL: Garbage_Filter_TCP */
+
 	if (sock->ops) {
 		struct module *owner = sock->ops->owner;
 
@@ -580,7 +587,7 @@ int sock_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 }
 EXPORT_SYMBOL(sock_sendmsg);
 
-static int sock_sendmsg_nosec(struct socket *sock, struct msghdr *msg, size_t size)
+int sock_sendmsg_nosec(struct socket *sock, struct msghdr *msg, size_t size)
 {
 	struct kiocb iocb;
 	struct sock_iocb siocb;
@@ -791,9 +798,9 @@ static ssize_t sock_sendpage(struct file *file, struct page *page,
 
 	sock = file->private_data;
 
-	flags = !(file->f_flags & O_NONBLOCK) ? 0 : MSG_DONTWAIT;
-	if (more)
-		flags |= MSG_MORE;
+	flags = (file->f_flags & O_NONBLOCK) ? MSG_DONTWAIT : 0;
+	/* more is a combination of MSG_MORE and MSG_SENDPAGE_NOTLAST */
+	flags |= more;
 
 	return kernel_sendpage(sock, page, offset, size, flags);
 }
@@ -1440,6 +1447,14 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 						      &address, addrlen);
 		}
 		fput_light(sock->file, fput_needed);
+		/* ++SSD_RIL: Garbage_Filter_UDP */
+		#ifdef CONFIG_ARCH_MSM8960
+		if (sock->sk != NULL) {
+			if (sock->sk->sk_protocol == IPPROTO_UDP)
+				add_or_remove_port(sock->sk, 1);
+		}
+		#endif
+		/* --SSD_RIL: Garbage_Filter_UDP */
 	}
 	return err;
 }
@@ -1467,6 +1482,10 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 			err = sock->ops->listen(sock, backlog);
 
 		fput_light(sock->file, fput_needed);
+		/* ++SSD_RIL: Garbage_Filter_TCP */
+		if (sock->sk != NULL)
+			add_or_remove_port(sock->sk, 1);
+		/* --SSD_RIL: Garbage_Filter_TCP */
 	}
 	return err;
 }
@@ -2645,6 +2664,7 @@ static int dev_ifconf(struct net *net, struct compat_ifconf __user *uifc32)
 	if (copy_from_user(&ifc32, uifc32, sizeof(struct compat_ifconf)))
 		return -EFAULT;
 
+	memset(&ifc, 0, sizeof(ifc));
 	if (ifc32.ifcbuf == 0) {
 		ifc32.ifc_len = 0;
 		ifc.ifc_len = 0;

@@ -6,7 +6,7 @@
  * Copyright 2006-2010 Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2008 Michael Wu <flamingice@sourmilk.net>
  * Copyright 2008 Luis Carlos Cobo <luisca@cozybit.com>
- * Copyright 2008 Michael Buesch <m@bues.ch>
+ * Copyright 2008 Michael Buesch <mb@bu3sch.de>
  * Copyright 2008, 2009 Luis R. Rodriguez <lrodriguez@atheros.com>
  * Copyright 2008 Jouni Malinen <jouni.malinen@atheros.com>
  * Copyright 2008 Colin McCabe <colin@cozybit.com>
@@ -247,8 +247,7 @@
  *	passed, all channels allowed for the current regulatory domain
  *	are used.  Extra IEs can also be passed from the userspace by
  *	using the %NL80211_ATTR_IE attribute.
- * @NL80211_CMD_STOP_SCHED_SCAN: stop a scheduled scan.  Returns -ENOENT
- *	if scheduled scan is not running.
+ * @NL80211_CMD_STOP_SCHED_SCAN: stop a scheduled scan
  * @NL80211_CMD_SCHED_SCAN_RESULTS: indicates that there are scheduled scan
  *	results available.
  * @NL80211_CMD_SCHED_SCAN_STOPPED: indicates that the scheduled scan has
@@ -484,14 +483,6 @@
  *	more background information, see
  *	http://wireless.kernel.org/en/users/Documentation/WoWLAN.
  *
- * @NL80211_CMD_SET_REKEY_OFFLOAD: This command is used give the driver
- *	the necessary information for supporting GTK rekey offload. This
- *	feature is typically used during WoWLAN. The configuration data
- *	is contained in %NL80211_ATTR_REKEY_DATA (which is nested and
- *	contains the data in sub-attributes). After rekeying happened,
- *	this command may also be sent by the driver as an MLME event to
- *	inform userspace of the new replay counter.
- *
  * @NL80211_CMD_MAX: highest used command number
  * @__NL80211_CMD_AFTER_LAST: internal use
  */
@@ -613,8 +604,6 @@ enum nl80211_commands {
 	NL80211_CMD_STOP_SCHED_SCAN,
 	NL80211_CMD_SCHED_SCAN_RESULTS,
 	NL80211_CMD_SCHED_SCAN_STOPPED,
-
-	NL80211_CMD_SET_REKEY_OFFLOAD,
 
 	/* add new commands above here */
 
@@ -762,6 +751,8 @@ enum nl80211_commands {
  *	that can be added to a scan request
  * @NL80211_ATTR_MAX_SCHED_SCAN_IE_LEN: maximum length of information
  *	elements that can be added to a scheduled scan request
+ * @NL80211_ATTR_MAX_MATCH_SETS: maximum number of sets that can be
+ *	used with @NL80211_ATTR_SCHED_SCAN_MATCH, a wiphy attribute.
  *
  * @NL80211_ATTR_SCAN_FREQUENCIES: nested attribute with frequencies (in MHz)
  * @NL80211_ATTR_SCAN_SSIDS: nested attribute with SSIDs, leave out for passive
@@ -993,8 +984,8 @@ enum nl80211_commands {
  *	driving the peer link management state machine.
  *	@NL80211_MESH_SETUP_USERSPACE_AMPE must be enabled.
  *
- * @NL80211_ATTR_WOWLAN_TRIGGERS_SUPPORTED: indicates, as part of the wiphy
- *	capabilities, the supported WoWLAN triggers
+ * @NL80211_ATTR_WOWLAN_SUPPORTED: indicates, as part of the wiphy capabilities,
+ *	the supported WoWLAN triggers
  * @NL80211_ATTR_WOWLAN_TRIGGERS: used by %NL80211_CMD_SET_WOWLAN to
  *	indicate which WoW triggers should be enabled. This is also
  *	used by %NL80211_CMD_GET_WOWLAN to get the currently enabled WoWLAN
@@ -1002,6 +993,24 @@ enum nl80211_commands {
 
  * @NL80211_ATTR_SCHED_SCAN_INTERVAL: Interval between scheduled scan
  *	cycles, in msecs.
+
+ * @NL80211_ATTR_SCHED_SCAN_MATCH: Nested attribute with one or more
+ *	sets of attributes to match during scheduled scans.  Only BSSs
+ *	that match any of the sets will be reported.  These are
+ *	pass-thru filter rules.
+ *	For a match to succeed, the BSS must match all attributes of a
+ *	set.  Since not every hardware supports matching all types of
+ *	attributes, there is no guarantee that the reported BSSs are
+ *	fully complying with the match sets and userspace needs to be
+ *	able to ignore them by itself.
+ *	Thus, the implementation is somewhat hardware-dependent, but
+ *	this is only an optimization and the userspace application
+ *	needs to handle all the non-filtered results anyway.
+ *	If the match attributes don't make sense when combined with
+ *	the values passed in @NL80211_ATTR_SCAN_SSIDS (eg. if an SSID
+ *	is included in the probe request, but the match attributes
+ *	will never let it go through), -EINVAL may be returned.
+ *	If ommited, no filtering is done.
  *
  * @NL80211_ATTR_INTERFACE_COMBINATIONS: Nested attribute listing the supported
  *	interface combinations. In each nested item, it contains attributes
@@ -1010,14 +1019,6 @@ enum nl80211_commands {
  *	%NL80211_ATTR_SUPPORTED_IFTYPES) containing the interface types that
  *	are managed in software: interfaces of these types aren't subject to
  *	any restrictions in their number or combinations.
- *
- * @%NL80211_ATTR_REKEY_DATA: nested attribute containing the information
- *	necessary for GTK rekeying in the device, see &enum nl80211_rekey_data.
- *
- * @NL80211_ATTR_SCAN_SUPP_RATES: rates per to be advertised as supported in scan,
- *	nested array attribute containing an entry for each band, with the entry
- *	being a list of supported rates as defined by IEEE 802.11 7.3.2.2 but
- *	without the length restriction (at most %NL80211_MAX_SUPP_RATES).
  *
  * @NL80211_ATTR_MAX: highest attribute number currently defined
  * @__NL80211_ATTR_AFTER_LAST: internal use
@@ -1223,6 +1224,19 @@ enum nl80211_attrs {
 	NL80211_ATTR_MAX_SCHED_SCAN_IE_LEN,
 
 	NL80211_ATTR_SCAN_SUPP_RATES,
+
+	NL80211_ATTR_HIDDEN_SSID,
+
+	NL80211_ATTR_IE_PROBE_RESP,
+	NL80211_ATTR_IE_ASSOC_RESP,
+
+	NL80211_ATTR_STA_WME,
+	NL80211_ATTR_SUPPORT_AP_UAPSD,
+
+	NL80211_ATTR_ROAM_SUPPORT,
+
+	NL80211_ATTR_SCHED_SCAN_MATCH,
+	NL80211_ATTR_MAX_MATCH_SETS,
 
 	/* add attributes here, update the policy in nl80211.c */
 
@@ -1683,6 +1697,26 @@ enum nl80211_reg_rule_attr {
 };
 
 /**
+ * enum nl80211_sched_scan_match_attr - scheduled scan match attributes
+ * @__NL80211_SCHED_SCAN_MATCH_ATTR_INVALID: attribute number 0 is reserved
+ * @NL80211_SCHED_SCAN_MATCH_ATTR_SSID: SSID to be used for matching,
+ * only report BSS with matching SSID.
+ * @NL80211_SCHED_SCAN_MATCH_ATTR_MAX: highest scheduled scan filter
+ *	attribute number currently defined
+ * @__NL80211_SCHED_SCAN_MATCH_ATTR_AFTER_LAST: internal use
+ */
+enum nl80211_sched_scan_match_attr {
+	__NL80211_SCHED_SCAN_MATCH_ATTR_INVALID,
+
+	NL80211_ATTR_SCHED_SCAN_MATCH_SSID,
+
+	/* keep last */
+	__NL80211_SCHED_SCAN_MATCH_ATTR_AFTER_LAST,
+	NL80211_SCHED_SCAN_MATCH_ATTR_MAX =
+		__NL80211_SCHED_SCAN_MATCH_ATTR_AFTER_LAST - 1
+};
+
+/**
  * enum nl80211_reg_rule_flags - regulatory rule flags
  *
  * @NL80211_RRF_NO_OFDM: OFDM modulation not allowed
@@ -2063,6 +2097,9 @@ enum nl80211_mfp {
 enum nl80211_wpa_versions {
 	NL80211_WPA_VERSION_1 = 1 << 0,
 	NL80211_WPA_VERSION_2 = 1 << 1,
+/* HTC_CSP_START */
+	NL80211_WAPI_VERSION_1 = 1 << 2,
+/* HTC_CSP_END */
 };
 
 /**
@@ -2269,16 +2306,6 @@ struct nl80211_wowlan_pattern_support {
  *
  *	In %NL80211_ATTR_WOWLAN_TRIGGERS_SUPPORTED, it is a binary attribute
  *	carrying a &struct nl80211_wowlan_pattern_support.
- * @NL80211_WOWLAN_TRIG_GTK_REKEY_SUPPORTED: Not a real trigger, and cannot be
- *	used when setting, used only to indicate that GTK rekeying is supported
- *	by the device (flag)
- * @NL80211_WOWLAN_TRIG_GTK_REKEY_FAILURE: wake up on GTK rekey failure (if
- *	done by the device) (flag)
- * @NL80211_WOWLAN_TRIG_EAP_IDENT_REQUEST: wake up on EAP Identity Request
- *	packet (flag)
- * @NL80211_WOWLAN_TRIG_4WAY_HANDSHAKE: wake up on 4-way handshake (flag)
- * @NL80211_WOWLAN_TRIG_RFKILL_RELEASE: wake up when rfkill is released
- *	(on devices that have rfkill in the device) (flag)
  * @NUM_NL80211_WOWLAN_TRIG: number of wake on wireless triggers
  * @MAX_NL80211_WOWLAN_TRIG: highest wowlan trigger attribute number
  */
@@ -2288,11 +2315,6 @@ enum nl80211_wowlan_triggers {
 	NL80211_WOWLAN_TRIG_DISCONNECT,
 	NL80211_WOWLAN_TRIG_MAGIC_PKT,
 	NL80211_WOWLAN_TRIG_PKT_PATTERN,
-	NL80211_WOWLAN_TRIG_GTK_REKEY_SUPPORTED,
-	NL80211_WOWLAN_TRIG_GTK_REKEY_FAILURE,
-	NL80211_WOWLAN_TRIG_EAP_IDENT_REQUEST,
-	NL80211_WOWLAN_TRIG_4WAY_HANDSHAKE,
-	NL80211_WOWLAN_TRIG_RFKILL_RELEASE,
 
 	/* keep last */
 	NUM_NL80211_WOWLAN_TRIG,
@@ -2404,30 +2426,6 @@ enum nl80211_plink_state {
 	/* keep last */
 	NUM_NL80211_PLINK_STATES,
 	MAX_NL80211_PLINK_STATES = NUM_NL80211_PLINK_STATES - 1
-};
-
-#define NL80211_KCK_LEN			16
-#define NL80211_KEK_LEN			16
-#define NL80211_REPLAY_CTR_LEN		8
-
-/**
- * enum nl80211_rekey_data - attributes for GTK rekey offload
- * @__NL80211_REKEY_DATA_INVALID: invalid number for nested attributes
- * @NL80211_REKEY_DATA_KEK: key encryption key (binary)
- * @NL80211_REKEY_DATA_KCK: key confirmation key (binary)
- * @NL80211_REKEY_DATA_REPLAY_CTR: replay counter (binary)
- * @NUM_NL80211_REKEY_DATA: number of rekey attributes (internal)
- * @MAX_NL80211_REKEY_DATA: highest rekey attribute (internal)
- */
-enum nl80211_rekey_data {
-	__NL80211_REKEY_DATA_INVALID,
-	NL80211_REKEY_DATA_KEK,
-	NL80211_REKEY_DATA_KCK,
-	NL80211_REKEY_DATA_REPLAY_CTR,
-
-	/* keep last */
-	NUM_NL80211_REKEY_DATA,
-	MAX_NL80211_REKEY_DATA = NUM_NL80211_REKEY_DATA - 1
 };
 
 #endif /* __LINUX_NL80211_H */

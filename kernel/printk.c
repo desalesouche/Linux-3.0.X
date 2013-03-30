@@ -290,6 +290,53 @@ static inline void boot_delay_msec(void)
 }
 #endif
 
+/*
+ * Return the number of unread characters in the log buffer.
+ */
+static int log_buf_get_len(void)
+{
+	return logged_chars;
+}
+
+/*
+ * Clears the ring-buffer
+ */
+void log_buf_clear(void)
+{
+	logged_chars = 0;
+}
+
+/*
+ * Copy a range of characters from the log buffer.
+ */
+int log_buf_copy(char *dest, int idx, int len)
+{
+	int ret, max;
+	bool took_lock = false;
+
+	if (!oops_in_progress) {
+		spin_lock_irq(&logbuf_lock);
+		took_lock = true;
+	}
+
+	max = log_buf_get_len();
+	if (idx < 0 || idx >= max) {
+		ret = -1;
+	} else {
+		if (len > max - idx)
+			len = max - idx;
+		ret = len;
+		idx += (log_end - max);
+		while (len-- > 0)
+			dest[len] = LOG_BUF(idx + len);
+	}
+
+	if (took_lock)
+		spin_unlock_irq(&logbuf_lock);
+
+	return ret;
+}
+
 #ifdef CONFIG_SECURITY_DMESG_RESTRICT
 int dmesg_restrict = 1;
 #else
@@ -633,8 +680,19 @@ static void call_console_drivers(unsigned start, unsigned end)
 	start_print = start;
 	while (cur_index != end) {
 		if (msg_level < 0 && ((end - cur_index) > 2)) {
+			/*
+			 * prepare buf_prefix, as a contiguous array,
+			 * to be processed by log_prefix function
+			 */
+			char buf_prefix[SYSLOG_PRI_MAX_LENGTH+1];
+			unsigned i;
+			for (i = 0; i < ((end - cur_index)) && (i < SYSLOG_PRI_MAX_LENGTH); i++) {
+				buf_prefix[i] = LOG_BUF(cur_index + i);
+			}
+			buf_prefix[i] = '\0'; /* force '\0' as last string character */
+
 			/* strip log prefix */
-			cur_index += log_prefix(&LOG_BUF(cur_index), &msg_level, NULL);
+			cur_index += log_prefix((const char *)&buf_prefix, &msg_level, NULL);
 			start_print = cur_index;
 		}
 		while (cur_index != end) {
@@ -768,6 +826,11 @@ static volatile unsigned int printk_cpu = UINT_MAX;
  */
 static inline int can_use_console(unsigned int cpu)
 {
+#ifdef CONFIG_HOTPLUG_CPU
+	if (!cpu_active(cpu) && cpu_hotplug_inprogress())
+		return 0;
+#endif
+
 	return cpu_online(cpu) || have_callable_console();
 }
 
@@ -784,7 +847,7 @@ static inline int can_use_console(unsigned int cpu)
 static int console_trylock_for_printk(unsigned int cpu)
 	__releases(&logbuf_lock)
 {
-	int retval = 0, wake = 0;
+	int retval = 0;
 
 	if (console_trylock()) {
 		retval = 1;
@@ -797,14 +860,12 @@ static int console_trylock_for_printk(unsigned int cpu)
 		 */
 		if (!can_use_console(cpu)) {
 			console_locked = 0;
-			wake = 1;
+			up(&console_sem);
 			retval = 0;
 		}
 	}
 	printk_cpu = UINT_MAX;
 	spin_unlock(&logbuf_lock);
-	if (wake)
-		up(&console_sem);
 	return retval;
 }
 static const char recursion_bug_msg [] =
@@ -875,6 +936,7 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	/* Emit the output into the temporary buffer */
 	printed_len += vscnprintf(printk_buf + printed_len,
 				  sizeof(printk_buf) - printed_len, fmt, args);
+
 
 	p = printk_buf;
 
@@ -1110,6 +1172,16 @@ static int __init console_suspend_disable(char *str)
 __setup("no_console_suspend", console_suspend_disable);
 
 /**
+ * suspend_console_deferred:
+ * Parameter to decide whether to defer suspension of console. If set as 1, suspend
+ * console is deferred to latter stages. Currently used in 8x60 projects only.
+ */
+int suspend_console_deferred = 1;
+module_param_named(
+	suspend_console_deferred, suspend_console_deferred, int, S_IRUGO | S_IWUSR | S_IWGRP
+);
+
+/**
  * suspend_console - suspend the console subsystem
  *
  * This disables printk() while we go into suspend states
@@ -1133,6 +1205,14 @@ void resume_console(void)
 	console_unlock();
 }
 
+static void __cpuinit console_flush(struct work_struct *work)
+{
+	console_lock();
+	console_unlock();
+}
+
+static __cpuinitdata DECLARE_WORK(console_cpu_notify_work, console_flush);
+
 /**
  * console_cpu_notify - print deferred console messages after CPU hotplug
  * @self: notifier struct
@@ -1143,6 +1223,9 @@ void resume_console(void)
  * will be spooled but will not show up on the console.  This function is
  * called when a new CPU comes online (or fails to come up), and ensures
  * that any such output gets printed.
+ *
+ * Special handling must be done for cases invoked from an atomic context,
+ * as we can't be taking the console semaphore here.
  */
 static int __cpuinit console_cpu_notify(struct notifier_block *self,
 	unsigned long action, void *hcpu)
@@ -1150,11 +1233,16 @@ static int __cpuinit console_cpu_notify(struct notifier_block *self,
 	switch (action) {
 	case CPU_ONLINE:
 	case CPU_DEAD:
-	case CPU_DYING:
 	case CPU_DOWN_FAILED:
 	case CPU_UP_CANCELED:
 		console_lock();
 		console_unlock();
+	/* invoked with preemption disabled, so defer */
+	case CPU_DYING:
+		if (!console_trylock())
+			schedule_work(&console_cpu_notify_work);
+		else
+			console_unlock();
 	}
 	return NOTIFY_OK;
 }
@@ -1246,7 +1334,7 @@ void console_unlock(void)
 {
 	unsigned long flags;
 	unsigned _con_start, _log_end;
-	unsigned wake_klogd = 0, retry = 0;
+	unsigned wake_klogd = 0;
 
 	if (console_suspended) {
 		up(&console_sem);
@@ -1255,7 +1343,6 @@ void console_unlock(void)
 
 	console_may_schedule = 0;
 
-again:
 	for ( ; ; ) {
 		spin_lock_irqsave(&logbuf_lock, flags);
 		wake_klogd |= log_start - log_end;
@@ -1276,23 +1363,8 @@ again:
 	if (unlikely(exclusive_console))
 		exclusive_console = NULL;
 
-	spin_unlock(&logbuf_lock);
-
 	up(&console_sem);
-
-	/*
-	 * Someone could have filled up the buffer again, so re-check if there's
-	 * something to flush. In case we cannot trylock the console_sem again,
-	 * there's a new owner and the console_unlock() from them will do the
-	 * flush, no worries.
-	 */
-	spin_lock(&logbuf_lock);
-	if (con_start != log_end)
-		retry = 1;
 	spin_unlock_irqrestore(&logbuf_lock, flags);
-	if (retry && console_trylock())
-		goto again;
-
 	if (wake_klogd)
 		wake_up_klogd();
 }
@@ -1377,7 +1449,7 @@ void console_start(struct console *console)
 }
 EXPORT_SYMBOL(console_start);
 
-static int __read_mostly keep_bootcon;
+static int __read_mostly keep_bootcon = 1;
 
 static int __init keep_bootcon_setup(char *str)
 {

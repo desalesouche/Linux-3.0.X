@@ -286,7 +286,8 @@ static inline int alloc_descs(unsigned int start, unsigned int cnt, int node,
 
 	for (i = 0; i < cnt; i++) {
 		struct irq_desc *desc = irq_to_desc(start + i);
-
+		/* we don't want it happened! */
+		BUG_ON(!desc);
 		desc->owner = owner;
 	}
 	return start;
@@ -344,7 +345,6 @@ EXPORT_SYMBOL_GPL(irq_free_descs);
  * @from:	Start the search from this irq number
  * @cnt:	Number of consecutive irqs to allocate.
  * @node:	Preferred node on which the irq descriptor should be allocated
- * @owner:	Owning module (can be NULL)
  *
  * Returns the first irq number or error code
  */
@@ -424,11 +424,22 @@ unsigned int irq_get_next_irq(unsigned int offset)
 }
 
 struct irq_desc *
-__irq_get_desc_lock(unsigned int irq, unsigned long *flags, bool bus)
+__irq_get_desc_lock(unsigned int irq, unsigned long *flags, bool bus,
+		    unsigned int check)
 {
 	struct irq_desc *desc = irq_to_desc(irq);
 
 	if (desc) {
+		if (check & _IRQ_DESC_CHECK) {
+			if ((check & _IRQ_DESC_PERCPU) &&
+			    !irq_settings_is_per_cpu_devid(desc))
+				return NULL;
+
+			if (!(check & _IRQ_DESC_PERCPU) &&
+			    irq_settings_is_per_cpu_devid(desc))
+				return NULL;
+		}
+
 		if (bus)
 			chip_bus_lock(desc);
 		raw_spin_lock_irqsave(&desc->lock, *flags);
@@ -441,6 +452,25 @@ void __irq_put_desc_unlock(struct irq_desc *desc, unsigned long flags, bool bus)
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
 	if (bus)
 		chip_bus_sync_unlock(desc);
+}
+
+int irq_set_percpu_devid(unsigned int irq)
+{
+	struct irq_desc *desc = irq_to_desc(irq);
+
+	if (!desc)
+		return -EINVAL;
+
+	if (desc->percpu_enabled)
+		return -EINVAL;
+
+	desc->percpu_enabled = kzalloc(sizeof(*desc->percpu_enabled), GFP_KERNEL);
+
+	if (!desc->percpu_enabled)
+		return -ENOMEM;
+
+	irq_set_percpu_devid_flags(irq);
+	return 0;
 }
 
 /**

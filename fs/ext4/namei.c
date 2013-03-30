@@ -289,7 +289,7 @@ static struct stats dx_show_leaf(struct dx_hash_info *hinfo, struct ext4_dir_ent
 				while (len--) printk("%c", *name++);
 				ext4fs_dirhash(de->name, de->name_len, &h);
 				printk(":%x.%u ", h.hash,
-				       (unsigned) ((char *) de - base));
+				       ((char *) de - base));
 			}
 			space += EXT4_DIR_REC_LEN(de->name_len);
 			names++;
@@ -922,8 +922,7 @@ restart:
 				bh = ext4_getblk(NULL, dir, b++, 0, &err);
 				bh_use[ra_max] = bh;
 				if (bh)
-					ll_rw_block(READ | REQ_META | REQ_PRIO,
-						    1, &bh);
+					ll_rw_block(READ_META, 1, &bh);
 			}
 		}
 		if ((bh = bh_use[ra_ptr++]) == NULL)
@@ -1014,10 +1013,62 @@ static struct buffer_head * ext4_dx_find_entry(struct inode *dir, const struct q
 
 	*err = -ENOENT;
 errout:
-	dxtrace(printk(KERN_DEBUG "%s not found\n", d_name->name));
+	dxtrace(printk(KERN_DEBUG "%s not found\n", name));
 	dx_release (frames);
 	return NULL;
 }
+
+#ifdef CONFIG_EXT4_WORKAROUND
+static int ext4_delete_entry(handle_t *handle,
+			     struct inode *dir,
+			     struct ext4_dir_entry_2 *de_del,
+			     struct buffer_head *bh);
+
+static int ext4_dir_delete_entry(struct inode *dir, struct dentry *dentry)
+{
+	int retval;
+	struct buffer_head *bh;
+	struct ext4_dir_entry_2 *de;
+	handle_t *handle;
+
+	/* Initialize quotas before so that eventual writes go
+	 * in separate transaction */
+	dquot_initialize(dir);
+	dquot_initialize(dentry->d_inode);
+
+	handle = ext4_journal_start(dir, EXT4_DELETE_TRANS_BLOCKS(dir->i_sb));
+	if (IS_ERR(handle)) {
+		pr_info("%s: ext4_journal_start failed\n", __func__);
+		return PTR_ERR(handle);
+	}
+
+	if (IS_DIRSYNC(dir))
+		ext4_handle_sync(handle);
+
+	retval = -ENOENT;
+	bh = ext4_find_entry(dir, &dentry->d_name, &de);
+	if (!bh) {
+		pr_info("%s: ext4_find_entry failed\n", __func__);
+		goto end_unlink;
+	}
+
+	retval = -EIO;
+	retval = ext4_delete_entry(handle, dir, de, bh);
+	if (retval) {
+		pr_info("%s: ext4_delete_entry failed\n", __func__);
+		goto end_unlink;
+	}
+	dir->i_ctime = dir->i_mtime = ext4_current_time(dir);
+	ext4_update_dx_flag(dir);
+	ext4_mark_inode_dirty(handle, dir);
+	retval = 0;
+
+end_unlink:
+	ext4_journal_stop(handle);
+	brelse(bh);
+	return retval;
+}
+#endif
 
 static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
 {
@@ -1038,11 +1089,23 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, stru
 			return ERR_PTR(-EIO);
 		}
 		inode = ext4_iget(dir->i_sb, ino);
-		if (inode == ERR_PTR(-ESTALE)) {
-			EXT4_ERROR_INODE(dir,
-					 "deleted inode referenced: %u",
-					 ino);
-			return ERR_PTR(-EIO);
+		if (IS_ERR(inode)) {
+			if (PTR_ERR(inode) == -ESTALE) {
+				/* workaround for deleted inode referenced issue */
+				#ifdef CONFIG_EXT4_WORKAROUND
+				pr_err("ext4: deleted inode referenced(current %s, name %s, ino %u)\n",
+					current->comm, dentry->d_name.name, ino);
+				ext4_dir_delete_entry(dir, dentry);
+				return NULL;
+				#else
+				EXT4_ERROR_INODE(dir,
+						 "deleted inode referenced: %u",
+						 ino);
+				return ERR_PTR(-EIO);
+				#endif
+			} else {
+				return ERR_CAST(inode);
+			}
 		}
 	}
 	return d_splice_alias(inode, dentry);
@@ -1796,9 +1859,7 @@ retry:
 	err = PTR_ERR(inode);
 	if (!IS_ERR(inode)) {
 		init_special_inode(inode, inode->i_mode, rdev);
-#ifdef CONFIG_EXT4_FS_XATTR
 		inode->i_op = &ext4_special_inode_operations;
-#endif
 		err = ext4_add_nondir(handle, dentry, inode);
 	}
 	ext4_journal_stop(handle);
@@ -1986,11 +2047,18 @@ int ext4_orphan_add(handle_t *handle, struct inode *inode)
 	if (!list_empty(&EXT4_I(inode)->i_orphan))
 		goto out_unlock;
 
-	/*
-	 * Orphan handling is only valid for files with data blocks
-	 * being truncated, or files being unlinked. Note that we either
-	 * hold i_mutex, or the inode can not be referenced from outside,
-	 * so i_nlink should not be bumped due to race
+	/* Orphan handling is only valid for files with data blocks
+	 * being truncated, or files being unlinked. */
+
+	/* @@@ FIXME: Observation from aviro:
+	 * I think I can trigger J_ASSERT in ext4_orphan_add().  We block
+	 * here (on s_orphan_lock), so race with ext4_link() which might bump
+	 * ->i_nlink. For, say it, character device. Not a regular file,
+	 * not a directory, not a symlink and ->i_nlink > 0.
+	 *
+	 * tytso, 4/25/2009: I'm not sure how that could happen;
+	 * shouldn't the fs core protect us from these sort of
+	 * unlink()/link() races?
 	 */
 	J_ASSERT((S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode) ||
 		  S_ISLNK(inode->i_mode)) || inode->i_nlink == 0);
@@ -2586,7 +2654,7 @@ const struct inode_operations ext4_dir_inode_operations = {
 	.listxattr	= ext4_listxattr,
 	.removexattr	= generic_removexattr,
 #endif
-	.get_acl	= ext4_get_acl,
+	.check_acl	= ext4_check_acl,
 	.fiemap         = ext4_fiemap,
 };
 
@@ -2598,5 +2666,5 @@ const struct inode_operations ext4_special_inode_operations = {
 	.listxattr	= ext4_listxattr,
 	.removexattr	= generic_removexattr,
 #endif
-	.get_acl	= ext4_get_acl,
+	.check_acl	= ext4_check_acl,
 };

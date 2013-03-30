@@ -37,6 +37,8 @@ static int all_versions = 0;
 static int external_module = 0;
 /* Warn about section mismatch in vmlinux if set to 1 */
 static int vmlinux_section_warnings = 1;
+/* Exit with an error when there is a section mismatch if set to 1 */
+static int section_error_on_mismatch;
 /* Only warn about unresolved symbols */
 static int warn_unresolved = 0;
 /* How a symbol is exported */
@@ -132,8 +134,10 @@ static struct module *new_module(char *modname)
 	/* strip trailing .o */
 	s = strrchr(p, '.');
 	if (s != NULL)
-		if (strcmp(s, ".o") == 0)
+		if (strcmp(s, ".o") == 0) {
 			*s = '\0';
+			mod->is_dot_o = 1;
+		}
 
 	/* add to list */
 	mod->name = p;
@@ -587,7 +591,8 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
 	unsigned int crc;
 	enum export export;
 
-	if (!is_vmlinux(mod->name) && strncmp(symname, "__ksymtab", 9) == 0)
+	if ((!is_vmlinux(mod->name) || mod->is_dot_o) &&
+	    strncmp(symname, "__ksymtab", 9) == 0)
 		export = export_from_secname(info, get_secindex(info, sym));
 	else
 		export = export_from_sec(info, get_secindex(info, sym));
@@ -849,7 +854,7 @@ static void check_section(const char *modname, struct elf_info *elf,
 
 #define ALL_INIT_DATA_SECTIONS \
 	".init.setup$", ".init.rodata$", \
-	".devinit.rodata$", ".cpuinit.rodata$", ".meminit.rodata$" \
+	".devinit.rodata$", ".cpuinit.rodata$", ".meminit.rodata$", \
 	".init.data$", ".devinit.data$", ".cpuinit.data$", ".meminit.data$"
 #define ALL_EXIT_DATA_SECTIONS \
 	".exit.data$", ".devexit.data$", ".cpuexit.data$", ".memexit.data$"
@@ -2095,7 +2100,7 @@ int main(int argc, char **argv)
 	struct ext_sym_list *extsym_iter;
 	struct ext_sym_list *extsym_start = NULL;
 
-	while ((opt = getopt(argc, argv, "i:I:e:cmsSo:awM:K:")) != -1) {
+	while ((opt = getopt(argc, argv, "i:I:e:cmsSo:awM:K:E")) != -1) {
 		switch (opt) {
 		case 'i':
 			kernel_read = optarg;
@@ -2132,6 +2137,9 @@ int main(int argc, char **argv)
 			break;
 		case 'w':
 			warn_unresolved = 1;
+			break;
+		case 'E':
+			section_error_on_mismatch = 1;
 			break;
 		default:
 			exit(1);
@@ -2181,11 +2189,23 @@ int main(int argc, char **argv)
 
 	if (dump_write)
 		write_dump(dump_write);
-	if (sec_mismatch_count && !sec_mismatch_verbose)
-		warn("modpost: Found %d section mismatch(es).\n"
-		     "To see full details build your kernel with:\n"
-		     "'make CONFIG_DEBUG_SECTION_MISMATCH=y'\n",
-		     sec_mismatch_count);
+
+	if (sec_mismatch_count && !sec_mismatch_verbose) {
+		merror(
+		"modpost: Found %d section mismatch(es).\n"
+		"To see full details build your kernel with:\n"
+		"'make CONFIG_DEBUG_SECTION_MISMATCH=y'\n",
+		sec_mismatch_count);
+
+	}
+
+	if (sec_mismatch_count && section_error_on_mismatch) {
+		err |= 1;
+		printf(
+		"To build the kernel despite the mismatches, "
+		"build with:\n'make CONFIG_NO_ERROR_ON_MISMATCH=y'\n"
+		"(NOTE: This is not recommended)\n");
+	}
 
 	return err;
 }

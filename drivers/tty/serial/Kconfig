@@ -457,7 +457,8 @@ config SERIAL_SAMSUNG_UARTS_4
 config SERIAL_SAMSUNG_UARTS
 	int
 	depends on ARM && PLAT_SAMSUNG
-	default 6 if ARCH_S5P6450
+	default 2 if ARCH_S3C2400
+	default 6 if CPU_S5P6450
 	default 4 if SERIAL_SAMSUNG_UARTS_4
 	default 3
 	help
@@ -488,6 +489,13 @@ config SERIAL_SAMSUNG_CONSOLE
 	  your boot loader about how to pass options to the kernel at
 	  boot time.)
 
+config SERIAL_S3C2400
+	tristate "Samsung S3C2410 Serial port support"
+	depends on ARM && SERIAL_SAMSUNG && CPU_S3C2400
+	default y if CPU_S3C2400
+	help
+	  Serial port support for the Samsung S3C2400 SoC
+
 config SERIAL_S3C2410
 	tristate "Samsung S3C2410 Serial port support"
 	depends on SERIAL_SAMSUNG && CPU_S3C2410
@@ -510,6 +518,13 @@ config SERIAL_S3C2440
 	select SERIAL_SAMSUNG_UARTS_4 if CPU_S3C2416
 	help
 	  Serial port support for the Samsung S3C2440, S3C2416 and S3C2442 SoC
+
+config SERIAL_S3C24A0
+	tristate "Samsung S3C24A0 Serial port support"
+	depends on SERIAL_SAMSUNG && CPU_S3C24A0
+	default y if CPU_S3C24A0
+	help
+	  Serial port support for the Samsung S3C24A0 SoC
 
 config SERIAL_S3C6400
 	tristate "Samsung S3C6400/S3C6410/S5P6440/S5P6450/S5PC100 Serial port support"
@@ -959,7 +974,7 @@ config SERIAL_IP22_ZILOG_CONSOLE
 
 config SERIAL_SH_SCI
 	tristate "SuperH SCI(F) serial port support"
-	depends on HAVE_CLK && (SUPERH || ARCH_SHMOBILE)
+	depends on HAVE_CLK && (SUPERH || H8300 || ARCH_SHMOBILE)
 	select SERIAL_CORE
 
 config SERIAL_SH_SCI_NR_UARTS
@@ -1292,6 +1307,56 @@ config SERIAL_MSM_HS
 
 	  Choose M here to compile it as a module. The module will be
 	  called msm_serial_hs.
+
+config SERIAL_MSM_HS_IMC
+        tristate "MSM UART High Speed: Serial Driver for IMC modem"
+        depends on ARCH_MSM
+        select SERIAL_CORE
+        help
+          If you have a machine based on MSM family of SoCs, you
+          can enable its onboard high speed serial port by enabling
+          this option.
+
+          Choose M here to compile it as a module. The module will be
+          called msm_serial_hs.
+
+config SERIAL_MSM_CLOCK_CONTROL
+	bool "Allow tty clients to make clock requests to msm uarts."
+	depends on SERIAL_MSM=y
+	default y
+	help
+	 Provides an interface for tty clients to request the msm uart clock
+	 to be turned on or off for power savings.
+
+config SERIAL_MSM_RX_WAKEUP
+	bool "Wakeup the msm uart clock on GPIO activity."
+	depends on SERIAL_MSM_CLOCK_CONTROL
+	default n
+	help
+	 Requires SERIAL_MSM_CLOCK_CONTROL. Wake up the uart while the uart
+	 clock is off, using a wakeup GPIO.
+
+config SERIAL_MSM_HSL
+	tristate "MSM UART High Speed : Legacy mode Serial Driver"
+	depends on ARM && ARCH_MSM
+	select SERIAL_CORE
+	default n
+	help
+	  Select this module to enable MSM high speed UART driver.
+
+config SERIAL_MSM_HSL_CONSOLE
+	bool "MSM High speed serial legacy mode console support"
+	depends on SERIAL_MSM_HSL=y
+	select SERIAL_CORE_CONSOLE
+	default n
+
+config SERIAL_BCM_BT_LPM
+	tristate "Broadcom Bluetooth Low Power Mode"
+	depends on ARM && ARCH_MSM
+	select SERIAL_CORE
+	default n
+	help
+	  Select this module for Broadcom Bluetooth low power management.
 
 config SERIAL_VT8500
 	bool "VIA VT8500 on-chip serial port support"

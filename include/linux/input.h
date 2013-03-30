@@ -119,9 +119,9 @@ struct input_keymap_entry {
 #define EVIOCGSND(len)		_IOC(_IOC_READ, 'E', 0x1a, len)		/* get all sounds status */
 #define EVIOCGSW(len)		_IOC(_IOC_READ, 'E', 0x1b, len)		/* get all switch states */
 
-#define EVIOCGBIT(ev,len)	_IOC(_IOC_READ, 'E', 0x20 + (ev), len)	/* get event bits */
-#define EVIOCGABS(abs)		_IOR('E', 0x40 + (abs), struct input_absinfo)	/* get abs value/limits */
-#define EVIOCSABS(abs)		_IOW('E', 0xc0 + (abs), struct input_absinfo)	/* set abs value/limits */
+#define EVIOCGBIT(ev,len)	_IOC(_IOC_READ, 'E', 0x20 + ev, len)	/* get event bits */
+#define EVIOCGABS(abs)		_IOR('E', 0x40 + abs, struct input_absinfo)	/* get abs value/limits */
+#define EVIOCSABS(abs)		_IOW('E', 0xc0 + abs, struct input_absinfo)	/* set abs value/limits */
 
 #define EVIOCSFF		_IOC(_IOC_WRITE, 'E', 0x80, sizeof(struct ff_effect))	/* send a force effect to a force feedback device */
 #define EVIOCRMFF		_IOW('E', 0x81, int)			/* Erase a force effect */
@@ -438,8 +438,9 @@ struct input_keymap_entry {
 #define KEY_WIMAX		246
 #define KEY_RFKILL		247	/* Key that controls all radios */
 
-#define KEY_MICMUTE		248	/* Mute / unmute the microphone */
-
+#define KEY_CAMCORDER		248	/* key that control Camera recorder */
+#define KEY_APP_SWITCH		249	/* key for list app*/
+#define KEY_WEIBO		250	/* key for weibo, customize*/
 /* Code 255 is reserved for special needs of AT keyboard driver */
 
 #define BTN_MISC		0x100
@@ -660,7 +661,7 @@ struct input_keymap_entry {
 #define KEY_NUMERIC_9		0x209
 #define KEY_NUMERIC_STAR	0x20a
 #define KEY_NUMERIC_POUND	0x20b
-
+#define KEY_CAMERA_SNAPSHOT	0x2fe
 #define KEY_CAMERA_FOCUS	0x210
 #define KEY_WPS_BUTTON		0x211	/* WiFi Protected Setup key */
 
@@ -772,6 +773,8 @@ struct input_keymap_entry {
 
 #define ABS_MISC		0x28
 
+#define ABS_MT_POSITION		0x2a    /* Group a set of X and Y */
+#define ABS_MT_AMPLITUDE	0x2b    /* Group a set of Z and W */
 #define ABS_MT_SLOT		0x2f	/* MT slot being modified */
 #define ABS_MT_TOUCH_MAJOR	0x30	/* Major axis of touching ellipse */
 #define ABS_MT_TOUCH_MINOR	0x31	/* Minor axis (omit if circular) */
@@ -814,6 +817,7 @@ struct input_keymap_entry {
 #define SW_KEYPAD_SLIDE		0x0a  /* set = keypad slide out */
 #define SW_FRONT_PROXIMITY	0x0b  /* set = front proximity sensor active */
 #define SW_ROTATE_LOCK		0x0c  /* set = rotate locked/disabled */
+#define SW_CAM			0x0e  /* set = 3D/Video mode for camera */
 #define SW_MAX			0x0f
 #define SW_CNT			(SW_MAX+1)
 

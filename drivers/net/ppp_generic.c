@@ -48,13 +48,24 @@
 #include <linux/slab.h>
 #include <asm/unaligned.h>
 #include <net/slhc_vj.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 
 #define PPP_VERSION	"2.4.2"
+
+#include <mach/board_htc.h>
+static int ppp_debug_mask;
+#define MODULE_NAME "[PPP]" /* HTC version */
+#if defined(pr_debug)
+#undef pr_debug
+#endif
+#define pr_debug(x...) do {                             \
+                if (ppp_debug_mask) \
+                        printk(KERN_DEBUG MODULE_NAME " "x);            \
+        } while (0)
 
 /*
  * Network protocols we support.
@@ -454,6 +465,16 @@ static ssize_t ppp_read(struct file *file, char __user *buf,
 		goto outf;
 	ret = skb->len;
 
+	if (ppp_debug_mask)
+	{
+		int i=0;
+		printk(MODULE_NAME "%s len=%d \n", __func__, skb->len);
+		printk("[PPP] Rx: ");
+		for (i=0; i<skb->len; i++)
+			printk("%02x ",buf[i]);
+		printk("\n");
+	}
+
  outf:
 	kfree_skb(skb);
  out:
@@ -466,6 +487,16 @@ static ssize_t ppp_write(struct file *file, const char __user *buf,
 	struct ppp_file *pf = file->private_data;
 	struct sk_buff *skb;
 	ssize_t ret;
+
+	if (ppp_debug_mask)
+	{
+		int i=0;
+		printk(MODULE_NAME "%s len=%d \n", __func__, count);
+		printk("[PPP] Tx: ");
+		for (i=0; i<count; i++)
+			printk("%02x ",buf[i]);
+		printk("\n");
+	}
 
 	if (!pf)
 		return -ENXIO;
@@ -899,6 +930,15 @@ static int __init ppp_init(void)
 {
 	int err;
 
+	if (get_kernel_flag() & BIT(22)){
+		ppp_debug_mask = 1;
+		printk(KERN_DEBUG MODULE_NAME " %s enable ppp debug msg\n", __func__);
+	}
+	else{
+		ppp_debug_mask = 0;
+		printk(KERN_DEBUG MODULE_NAME " %s disable ppp debug msg\n", __func__);
+	}
+
 	pr_info("PPP generic driver version " PPP_VERSION "\n");
 
 	err = register_pernet_device(&ppp_net_ops);
@@ -968,7 +1008,6 @@ ppp_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	proto = npindex_to_proto[npi];
 	put_unaligned_be16(proto, pp);
 
-	netif_stop_queue(dev);
 	skb_queue_tail(&ppp->file.xq, skb);
 	ppp_xmit_process(ppp);
 	return NETDEV_TX_OK;
@@ -1063,6 +1102,8 @@ ppp_xmit_process(struct ppp *ppp)
 		   code that we can accept some more. */
 		if (!ppp->xmit_pending && !skb_peek(&ppp->file.xq))
 			netif_wake_queue(ppp->dev);
+		else
+			netif_stop_queue(ppp->dev);
 	}
 	ppp_xmit_unlock(ppp);
 }
@@ -1232,7 +1273,15 @@ ppp_send_frame(struct ppp *ppp, struct sk_buff *skb)
 	return;
 
  drop:
+#ifdef CONFIG_HTC_NETWORK_MODIFY
+	if (!IS_ERR(skb) && (skb))
+		kfree_skb(skb);
+	else
+		printk(KERN_ERR "[PPP] skb is NULL in %s!\n", __func__);
+#else
 	kfree_skb(skb);
+#endif
+
 	++ppp->dev->stats.tx_errors;
 }
 
@@ -1465,12 +1514,7 @@ static int ppp_mp_explode(struct ppp *ppp, struct sk_buff *skb)
 			continue;
 		}
 
-		/*
-		 * hdrlen includes the 2-byte PPP protocol field, but the
-		 * MTU counts only the payload excluding the protocol field.
-		 * (RFC1661 Section 2)
-		 */
-		mtu = pch->chan->mtu - (hdrlen - 2);
+		mtu = pch->chan->mtu - hdrlen;
 		if (mtu < 4)
 			mtu = 4;
 		if (flen > mtu)
@@ -1536,6 +1580,11 @@ ppp_channel_push(struct channel *pch)
 		while (!skb_queue_empty(&pch->file.xq)) {
 			skb = skb_dequeue(&pch->file.xq);
 			if (!pch->chan->ops->start_xmit(pch->chan, skb)) {
+
+#ifdef CONFIG_HTC_NETWORK_MODIFY
+				if (IS_ERR(skb) || (!skb))
+					printk(KERN_ERR "[PPP] skb is NULL in %s!\n", __func__);
+#endif
 				/* put the packet back and try again later */
 				skb_queue_head(&pch->file.xq, skb);
 				break;
@@ -2024,14 +2073,22 @@ ppp_mp_reconstruct(struct ppp *ppp)
 			continue;
 		}
 		if (PPP_MP_CB(p)->sequence != seq) {
+			u32 oldseq;
 			/* Fragment `seq' is missing.  If it is after
 			   minseq, it might arrive later, so stop here. */
 			if (seq_after(seq, minseq))
 				break;
 			/* Fragment `seq' is lost, keep going. */
 			lost = 1;
+			oldseq = seq;
 			seq = seq_before(minseq, PPP_MP_CB(p)->sequence)?
 				minseq + 1: PPP_MP_CB(p)->sequence;
+
+			if (ppp->debug & 1)
+				netdev_printk(KERN_DEBUG, ppp->dev,
+					      "lost frag %u..%u\n",
+					      oldseq, seq-1);
+
 			goto again;
 		}
 
@@ -2076,6 +2133,10 @@ ppp_mp_reconstruct(struct ppp *ppp)
 			struct sk_buff *tmp2;
 
 			skb_queue_reverse_walk_from_safe(list, p, tmp2) {
+				if (ppp->debug & 1)
+					netdev_printk(KERN_DEBUG, ppp->dev,
+						      "discarding frag %u\n",
+						      PPP_MP_CB(p)->sequence);
 				__skb_unlink(p, list);
 				kfree_skb(p);
 			}
@@ -2091,6 +2152,17 @@ ppp_mp_reconstruct(struct ppp *ppp)
 		/* If we have discarded any fragments,
 		   signal a receive error. */
 		if (PPP_MP_CB(head)->sequence != ppp->nextseq) {
+			skb_queue_walk_safe(list, p, tmp) {
+				if (p == head)
+					break;
+				if (ppp->debug & 1)
+					netdev_printk(KERN_DEBUG, ppp->dev,
+						      "discarding frag %u\n",
+						      PPP_MP_CB(p)->sequence);
+				__skb_unlink(p, list);
+				kfree_skb(p);
+			}
+
 			if (ppp->debug & 1)
 				netdev_printk(KERN_DEBUG, ppp->dev,
 					      "  missed pkts %u..%u\n",

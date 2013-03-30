@@ -429,19 +429,19 @@ static struct dmi_system_id __initdata acpisleep_dmi_table[] = {
 		},
 	},
 	{
-	.callback = init_old_suspend_ordering,
-	.ident = "Asus A8N-SLI DELUXE",
+	.callback = init_nvs_nosave,
+	.ident = "Asus K54C",
 	.matches = {
-		DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK Computer INC."),
-		DMI_MATCH(DMI_BOARD_NAME, "A8N-SLI DELUXE"),
+		DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK Computer Inc."),
+		DMI_MATCH(DMI_PRODUCT_NAME, "K54C"),
 		},
 	},
 	{
-	.callback = init_old_suspend_ordering,
-	.ident = "Asus A8N-SLI Premium",
+	.callback = init_nvs_nosave,
+	.ident = "Asus K54HR",
 	.matches = {
-		DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK Computer INC."),
-		DMI_MATCH(DMI_BOARD_NAME, "A8N-SLI Premium"),
+		DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK Computer Inc."),
+		DMI_MATCH(DMI_PRODUCT_NAME, "K54HR"),
 		},
 	},
 	{},

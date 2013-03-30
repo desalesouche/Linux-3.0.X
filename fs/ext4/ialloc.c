@@ -1021,8 +1021,12 @@ got:
 	if (IS_DIRSYNC(inode))
 		ext4_handle_sync(handle);
 	if (insert_inode_locked(inode) < 0) {
-		err = -EINVAL;
-		goto fail_drop;
+		/*
+		 * Likely a bitmap corruption causing inode to be allocated
+		 * twice.
+		 */
+		err = -EIO;
+		goto fail;
 	}
 	spin_lock(&sbi->s_next_gen_lock);
 	inode->i_generation = sbi->s_next_generation++;
@@ -1287,7 +1291,7 @@ extern int ext4_init_inode_table(struct super_block *sb, ext4_group_t group,
 			   group, used_blks,
 			   ext4_itable_unused_count(sb, gdp));
 		ret = 1;
-		goto err_out;
+		goto out;
 	}
 
 	blk = ext4_inode_table(sb, gdp) + used_blks;

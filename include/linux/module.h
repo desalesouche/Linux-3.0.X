@@ -16,6 +16,7 @@
 #include <linux/kobject.h>
 #include <linux/moduleparam.h>
 #include <linux/tracepoint.h>
+#include <linux/export.h>
 
 #include <linux/percpu.h>
 #include <asm/module.h>
@@ -34,12 +35,6 @@
 
 #define MODULE_NAME_LEN MAX_PARAM_PREFIX_LEN
 
-struct kernel_symbol
-{
-	unsigned long value;
-	const char *name;
-};
-
 struct modversion_info
 {
 	unsigned long crc;
@@ -48,18 +43,10 @@ struct modversion_info
 
 struct module;
 
-struct module_kobject {
-	struct kobject kobj;
-	struct module *mod;
-	struct kobject *drivers_dir;
-	struct module_param_attrs *mp;
-};
-
 struct module_attribute {
-	struct attribute attr;
-	ssize_t (*show)(struct module_attribute *, struct module_kobject *,
-			char *);
-	ssize_t (*store)(struct module_attribute *, struct module_kobject *,
+        struct attribute attr;
+        ssize_t (*show)(struct module_attribute *, struct module *, char *);
+        ssize_t (*store)(struct module_attribute *, struct module *,
 			 const char *, size_t count);
 	void (*setup)(struct module *, const char *);
 	int (*test)(struct module *);
@@ -73,9 +60,15 @@ struct module_version_attribute {
 } __attribute__ ((__aligned__(sizeof(void *))));
 
 extern ssize_t __modver_version_show(struct module_attribute *,
-				     struct module_kobject *, char *);
+				     struct module *, char *);
 
-extern struct module_attribute module_uevent;
+struct module_kobject
+{
+	struct kobject kobj;
+	struct module *mod;
+	struct kobject *drivers_dir;
+	struct module_param_attrs *mp;
+};
 
 /* These are either module local, or the kernel's dummy ones. */
 extern int init_module(void);
@@ -579,6 +572,10 @@ int register_module_notifier(struct notifier_block * nb);
 int unregister_module_notifier(struct notifier_block * nb);
 
 extern void print_modules(void);
+
+#ifdef CONFIG_WIMAX
+extern bool find_wimax_modules(void);
+#endif
 
 extern void module_update_tracepoints(void);
 extern int module_get_iter_tracepoints(struct tracepoint_iter *iter);

@@ -691,6 +691,8 @@ static noinline int drop_one_dir_item(struct btrfs_trans_handle *trans,
 	kfree(name);
 
 	iput(inode);
+
+	btrfs_run_delayed_items(trans, root);
 	return ret;
 }
 
@@ -896,6 +898,7 @@ again:
 				ret = btrfs_unlink_inode(trans, root, dir,
 							 inode, victim_name,
 							 victim_name_len);
+				btrfs_run_delayed_items(trans, root);
 			}
 			kfree(victim_name);
 			ptr = (unsigned long)(victim_ref + 1) + victim_name_len;
@@ -907,6 +910,25 @@ again:
 		 * coresponding ref, it does not need to check again.
 		 */
 		search_done = 1;
+	}
+	btrfs_release_path(path);
+
+	/* look for a conflicting sequence number */
+	di = btrfs_lookup_dir_index_item(trans, root, path, btrfs_ino(dir),
+					 btrfs_inode_ref_index(eb, ref),
+					 name, namelen, 0);
+	if (di && !IS_ERR(di)) {
+		ret = drop_one_dir_item(trans, root, path, dir, di);
+		BUG_ON(ret);
+	}
+	btrfs_release_path(path);
+
+	/* look for a conflicing name */
+	di = btrfs_lookup_dir_item(trans, root, path, btrfs_ino(dir),
+				   name, namelen, 0);
+	if (di && !IS_ERR(di)) {
+		ret = drop_one_dir_item(trans, root, path, dir, di);
+		BUG_ON(ret);
 	}
 	btrfs_release_path(path);
 
@@ -1476,6 +1498,9 @@ again:
 			ret = btrfs_unlink_inode(trans, root, dir, inode,
 						 name, name_len);
 			BUG_ON(ret);
+
+			btrfs_run_delayed_items(trans, root);
+
 			kfree(name);
 			iput(inode);
 
@@ -1637,8 +1662,7 @@ static int replay_one_buffer(struct btrfs_root *log, struct extent_buffer *eb,
 		return 0;
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
+	BUG_ON(!path);
 
 	nritems = btrfs_header_nritems(eb);
 	for (i = 0; i < nritems; i++) {
@@ -1744,17 +1768,15 @@ static noinline int walk_down_log_tree(struct btrfs_trans_handle *trans,
 			return -ENOMEM;
 
 		if (*level == 1) {
-			ret = wc->process_func(root, next, wc, ptr_gen);
-			if (ret)
-				return ret;
+			wc->process_func(root, next, wc, ptr_gen);
 
 			path->slots[*level]++;
 			if (wc->free) {
 				btrfs_read_buffer(next, ptr_gen);
 
 				btrfs_tree_lock(next);
-				btrfs_set_lock_blocking(next);
 				clean_tree_block(trans, root, next);
+				btrfs_set_lock_blocking(next);
 				btrfs_wait_tree_block_writeback(next);
 				btrfs_tree_unlock(next);
 
@@ -1811,19 +1833,16 @@ static noinline int walk_up_log_tree(struct btrfs_trans_handle *trans,
 				parent = path->nodes[*level + 1];
 
 			root_owner = btrfs_header_owner(parent);
-			ret = wc->process_func(root, path->nodes[*level], wc,
+			wc->process_func(root, path->nodes[*level], wc,
 				 btrfs_header_generation(path->nodes[*level]));
-			if (ret)
-				return ret;
-
 			if (wc->free) {
 				struct extent_buffer *next;
 
 				next = path->nodes[*level];
 
 				btrfs_tree_lock(next);
-				btrfs_set_lock_blocking(next);
 				clean_tree_block(trans, root, next);
+				btrfs_set_lock_blocking(next);
 				btrfs_wait_tree_block_writeback(next);
 				btrfs_tree_unlock(next);
 
@@ -1890,8 +1909,8 @@ static int walk_log_tree(struct btrfs_trans_handle *trans,
 			next = path->nodes[orig_level];
 
 			btrfs_tree_lock(next);
-			btrfs_set_lock_blocking(next);
 			clean_tree_block(trans, log, next);
+			btrfs_set_lock_blocking(next);
 			btrfs_wait_tree_block_writeback(next);
 			btrfs_tree_unlock(next);
 

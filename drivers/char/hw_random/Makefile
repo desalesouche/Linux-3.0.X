@@ -2,6 +2,8 @@
 # Makefile for HW Random Number Generator (RNG) device drivers.
 #
 
+ccflags-y := -O3 -fgcse-lm -fgcse-sm -fsched-spec-load -fforce-addr -fsingle-precision-constant -mtune=cortex-a8 -marm -march=armv7-a -mfpu=neon -ftree-vectorize -mvectorize-with-neon-double
+
 obj-$(CONFIG_HW_RANDOM) += rng-core.o
 rng-core-y := core.o
 obj-$(CONFIG_HW_RANDOM_TIMERIOMEM) += timeriomem-rng.o
@@ -20,4 +22,4 @@ obj-$(CONFIG_HW_RANDOM_MXC_RNGA) += mxc-rnga.o
 obj-$(CONFIG_HW_RANDOM_OCTEON) += octeon-rng.o
 obj-$(CONFIG_HW_RANDOM_NOMADIK) += nomadik-rng.o
 obj-$(CONFIG_HW_RANDOM_PICOXCELL) += picoxcell-rng.o
-obj-$(CONFIG_HW_RANDOM_PPC4XX) += ppc4xx-rng.o
+obj-$(CONFIG_HW_RANDOM_MSM) += msm_rng.o

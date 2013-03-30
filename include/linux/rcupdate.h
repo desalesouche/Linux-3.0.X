@@ -156,6 +156,8 @@ static inline void rcu_exit_nohz(void)
 #include <linux/rcutree.h>
 #elif defined(CONFIG_TINY_RCU) || defined(CONFIG_TINY_PREEMPT_RCU)
 #include <linux/rcutiny.h>
+#elif defined(CONFIG_JRCU)
+#include <linux/jrcu.h>
 #else
 #error "Unknown RCU implementation specified to kernel configuration"
 #endif
@@ -239,7 +241,7 @@ extern int rcu_read_lock_bh_held(void);
  * Check debug_lockdep_rcu_enabled() to prevent false positives during boot
  * and while lockdep is disabled.
  */
-#ifdef CONFIG_PREEMPT_COUNT
+#ifdef CONFIG_PREEMPT
 static inline int rcu_read_lock_sched_held(void)
 {
 	int lockdep_opinion = 0;
@@ -250,12 +252,12 @@ static inline int rcu_read_lock_sched_held(void)
 		lockdep_opinion = lock_is_held(&rcu_sched_lock_map);
 	return lockdep_opinion || preempt_count() != 0 || irqs_disabled();
 }
-#else /* #ifdef CONFIG_PREEMPT_COUNT */
+#else /* #ifdef CONFIG_PREEMPT */
 static inline int rcu_read_lock_sched_held(void)
 {
 	return 1;
 }
-#endif /* #else #ifdef CONFIG_PREEMPT_COUNT */
+#endif /* #else #ifdef CONFIG_PREEMPT */
 
 #else /* #ifdef CONFIG_DEBUG_LOCK_ALLOC */
 
@@ -276,17 +278,17 @@ static inline int rcu_read_lock_bh_held(void)
 	return 1;
 }
 
-#ifdef CONFIG_PREEMPT_COUNT
+#ifdef CONFIG_PREEMPT
 static inline int rcu_read_lock_sched_held(void)
 {
 	return preempt_count() != 0 || irqs_disabled();
 }
-#else /* #ifdef CONFIG_PREEMPT_COUNT */
+#else /* #ifdef CONFIG_PREEMPT */
 static inline int rcu_read_lock_sched_held(void)
 {
 	return 1;
 }
-#endif /* #else #ifdef CONFIG_PREEMPT_COUNT */
+#endif /* #else #ifdef CONFIG_PREEMPT */
 
 #endif /* #else #ifdef CONFIG_DEBUG_LOCK_ALLOC */
 
@@ -716,6 +718,12 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
 #define RCU_INIT_POINTER(p, v) \
 		p = (typeof(*v) __force __rcu *)(v)
 
+#define rcu_assign_pointer_nonull(p, v) \
+	({ \
+		if (!__builtin_constant_p(v)) \
+			smp_wmb(); \
+		(p) = (v); \
+	})
 /* Infrastructure to implement the synchronize_() primitives. */
 
 struct rcu_synchronize {

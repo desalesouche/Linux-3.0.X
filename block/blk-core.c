@@ -524,7 +524,7 @@ blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
 	q->request_fn		= rfn;
 	q->prep_rq_fn		= NULL;
 	q->unprep_rq_fn		= NULL;
-	q->queue_flags		= QUEUE_FLAG_DEFAULT;
+	q->queue_flags		|= QUEUE_FLAG_DEFAULT;
 
 	/* Override internal queue lock with supplied lock pointer */
 	if (lock)
@@ -706,9 +706,15 @@ static struct request *get_request(struct request_queue *q, int rw_flags,
 			if (!blk_queue_full(q, is_sync)) {
 				ioc_set_batching(q, ioc);
 				blk_set_queue_full(q, is_sync);
-			} else {
-				if (may_queue != ELV_MQUEUE_MUST
-						&& !ioc_batching(q, ioc)) {
+			}
+
+			else {
+/* Modified by Memory, Studio Software for Zimmer */
+#if defined(CONFIG_ZIMMER)
+                if (may_queue != ELV_MQUEUE_MUST && !ioc_batching(q, ioc) && (!(bio->bi_rw & REQ_SWAPIN_DMPG))) {
+#else
+                if (may_queue != ELV_MQUEUE_MUST && !ioc_batching(q, ioc)) {
+#endif
 					/*
 					 * The queue is full and the allocating
 					 * process is not a "batcher", and not
@@ -726,7 +732,12 @@ static struct request *get_request(struct request_queue *q, int rw_flags,
 	 * limit of requests, otherwise we could have thousands of requests
 	 * allocated with any setting of ->nr_requests
 	 */
-	if (rl->count[is_sync] >= (3 * q->nr_requests / 2))
+	/* Modified by Memory, Studio Software for Zimmer */
+#if defined(CONFIG_ZIMMER)
+    if ((rl->count[is_sync] >= (3 * q->nr_requests / 2)) && (!(bio->bi_rw & REQ_SWAPIN_DMPG)))
+#else
+    if ((rl->count[is_sync] >= (3 * q->nr_requests / 2)))
+#endif
 		goto out;
 
 	rl->count[is_sync]++;
@@ -1158,7 +1169,7 @@ static bool bio_attempt_front_merge(struct request_queue *q,
  * true if merge was successful, otherwise false.
  */
 static bool attempt_plug_merge(struct task_struct *tsk, struct request_queue *q,
-			       struct bio *bio, unsigned int *request_count)
+			       struct bio *bio)
 {
 	struct blk_plug *plug;
 	struct request *rq;
@@ -1167,12 +1178,9 @@ static bool attempt_plug_merge(struct task_struct *tsk, struct request_queue *q,
 	plug = tsk->plug;
 	if (!plug)
 		goto out;
-	*request_count = 0;
 
 	list_for_each_entry_reverse(rq, &plug->list, queuelist) {
 		int el_ret;
-
-		(*request_count)++;
 
 		if (rq->q != q)
 			continue;
@@ -1201,6 +1209,12 @@ void init_request_from_bio(struct request *req, struct bio *bio)
 	if (bio->bi_rw & REQ_RAHEAD)
 		req->cmd_flags |= REQ_FAILFAST_MASK;
 
+/* Modified by Memory, Studio Software for Zimmer */
+#if defined(CONFIG_ZIMMER)
+	if (bio->bi_rw & REQ_SWAPIN_DMPG)
+		req->cmd_flags |= (REQ_SWAPIN_DMPG | REQ_NOMERGE);
+#endif
+
 	req->errors = 0;
 	req->__sector = bio->bi_sector;
 	req->ioprio = bio_prio(bio);
@@ -1213,7 +1227,6 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 	struct blk_plug *plug;
 	int el_ret, rw_flags, where = ELEVATOR_INSERT_SORT;
 	struct request *req;
-	unsigned int request_count = 0;
 
 	/*
 	 * low level driver can indicate that it wants pages above a
@@ -1222,7 +1235,12 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 	 */
 	blk_queue_bounce(q, &bio);
 
+/* Modified by Memory, Studio Software for Zimmer */
+#if defined(CONFIG_ZIMMER)
+	if (bio->bi_rw & (REQ_FLUSH | REQ_FUA) || bio->bi_rw & REQ_SWAPIN_DMPG) {
+#else
 	if (bio->bi_rw & (REQ_FLUSH | REQ_FUA)) {
+#endif
 		spin_lock_irq(q->queue_lock);
 		where = ELEVATOR_INSERT_FLUSH;
 		goto get_rq;
@@ -1232,7 +1250,7 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 	 * Check if we can merge with the plugged list before grabbing
 	 * any locks.
 	 */
-	if (attempt_plug_merge(current, q, bio, &request_count))
+	if (attempt_plug_merge(current, q, bio))
 		goto out;
 
 	spin_lock_irq(q->queue_lock);
@@ -1277,8 +1295,10 @@ get_rq:
 	init_request_from_bio(req, bio);
 
 	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags) ||
-	    bio_flagged(bio, BIO_CPU_AFFINE))
-		req->cpu = raw_smp_processor_id();
+	    bio_flagged(bio, BIO_CPU_AFFINE)) {
+		req->cpu = blk_cpu_to_group(get_cpu());
+		put_cpu();
+	}
 
 	plug = current->plug;
 	if (plug) {
@@ -1297,8 +1317,6 @@ get_rq:
 			if (__rq->q != q)
 				plug->should_sort = 1;
 		}
-		if (request_count >= BLK_MAX_REQUEST_COUNT)
-			blk_flush_plug_list(plug, false);
 		list_add_tail(&req->queuelist, &plug->list);
 		drive_stat_acct(req, 1);
 	} else {
@@ -1355,27 +1373,29 @@ static int __init setup_fail_make_request(char *str)
 }
 __setup("fail_make_request=", setup_fail_make_request);
 
-static bool should_fail_request(struct hd_struct *part, unsigned int bytes)
+static int should_fail_request(struct bio *bio)
 {
-	return part->make_it_fail && should_fail(&fail_make_request, bytes);
+	struct hd_struct *part = bio->bi_bdev->bd_part;
+
+	if (part_to_disk(part)->part0.make_it_fail || part->make_it_fail)
+		return should_fail(&fail_make_request, bio->bi_size);
+
+	return 0;
 }
 
 static int __init fail_make_request_debugfs(void)
 {
-	struct dentry *dir = fault_create_debugfs_attr("fail_make_request",
-						NULL, &fail_make_request);
-
-	return IS_ERR(dir) ? PTR_ERR(dir) : 0;
+	return init_fault_attr_dentries(&fail_make_request,
+					"fail_make_request");
 }
 
 late_initcall(fail_make_request_debugfs);
 
 #else /* CONFIG_FAIL_MAKE_REQUEST */
 
-static inline bool should_fail_request(struct hd_struct *part,
-					unsigned int bytes)
+static inline int should_fail_request(struct bio *bio)
 {
-	return false;
+	return 0;
 }
 
 #endif /* CONFIG_FAIL_MAKE_REQUEST */
@@ -1437,9 +1457,12 @@ static inline void __generic_make_request(struct bio *bio)
 {
 	struct request_queue *q;
 	sector_t old_sector;
-	int ret, nr_sectors = bio_sectors(bio);
+	int ret, nr_sectors = 0;
 	dev_t old_dev;
 	int err = -EIO;
+
+	if (bio)
+		nr_sectors = bio_sectors(bio);
 
 	might_sleep();
 
@@ -1458,7 +1481,6 @@ static inline void __generic_make_request(struct bio *bio)
 	old_dev = 0;
 	do {
 		char b[BDEVNAME_SIZE];
-		struct hd_struct *part;
 
 		q = bdev_get_queue(bio->bi_bdev);
 		if (unlikely(!q)) {
@@ -1482,10 +1504,7 @@ static inline void __generic_make_request(struct bio *bio)
 		if (unlikely(test_bit(QUEUE_FLAG_DEAD, &q->queue_flags)))
 			goto end_io;
 
-		part = bio->bi_bdev->bd_part;
-		if (should_fail_request(part, bio->bi_size) ||
-		    should_fail_request(&part_to_disk(part)->part0,
-					bio->bi_size))
+		if (should_fail_request(bio))
 			goto end_io;
 
 		/*
@@ -1696,14 +1715,15 @@ EXPORT_SYMBOL_GPL(blk_rq_check_limits);
 int blk_insert_cloned_request(struct request_queue *q, struct request *rq)
 {
 	unsigned long flags;
-	int where = ELEVATOR_INSERT_BACK;
 
 	if (blk_rq_check_limits(q, rq))
 		return -EIO;
 
-	if (rq->rq_disk &&
-	    should_fail_request(&rq->rq_disk->part0, blk_rq_bytes(rq)))
+#ifdef CONFIG_FAIL_MAKE_REQUEST
+	if (rq->rq_disk && rq->rq_disk->part0.make_it_fail &&
+	    should_fail(&fail_make_request, blk_rq_bytes(rq)))
 		return -EIO;
+#endif
 
 	spin_lock_irqsave(q->queue_lock, flags);
 
@@ -1713,12 +1733,7 @@ int blk_insert_cloned_request(struct request_queue *q, struct request *rq)
 	 */
 	BUG_ON(blk_queued_rq(rq));
 
-	if (rq->cmd_flags & (REQ_FLUSH|REQ_FUA))
-		where = ELEVATOR_INSERT_FLUSH;
-
-	add_acct_request(q, rq, where);
-	if (where == ELEVATOR_INSERT_FLUSH)
-		__blk_run_queue(q);
+	add_acct_request(q, rq, ELEVATOR_INSERT_BACK);
 	spin_unlock_irqrestore(q->queue_lock, flags);
 
 	return 0;
@@ -2275,7 +2290,7 @@ static bool blk_end_bidi_request(struct request *rq, int error,
  *     %false - we are done with this request
  *     %true  - still buffers pending for this request
  **/
-bool __blk_end_bidi_request(struct request *rq, int error,
+static bool __blk_end_bidi_request(struct request *rq, int error,
 				   unsigned int nr_bytes, unsigned int bidi_bytes)
 {
 	if (blk_update_bidi_request(rq, error, nr_bytes, bidi_bytes))

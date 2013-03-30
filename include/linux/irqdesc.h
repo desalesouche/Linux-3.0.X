@@ -38,7 +38,6 @@ struct timer_rand_state;
  */
 struct irq_desc {
 	struct irq_data		irq_data;
-	struct timer_rand_state *timer_rand_state;
 	unsigned int __percpu	*kstat_irqs;
 	irq_flow_handler_t	handle_irq;
 #ifdef CONFIG_IRQ_PREFLOW_FASTEOI
@@ -53,6 +52,7 @@ struct irq_desc {
 	unsigned long		last_unhandled;	/* Aging timer for unhandled count */
 	unsigned int		irqs_unhandled;
 	raw_spinlock_t		lock;
+	struct cpumask		*percpu_enabled;
 #ifdef CONFIG_SMP
 	const struct cpumask	*affinity_hint;
 	struct irq_affinity_notify *affinity_notify;
@@ -128,6 +128,7 @@ static inline void __irq_set_handler_locked(unsigned int irq,
 	struct irq_desc *desc;
 
 	desc = irq_to_desc(irq);
+	BUG_ON(!desc);
 	desc->handle_irq = handler;
 }
 

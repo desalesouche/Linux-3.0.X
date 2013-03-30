@@ -34,6 +34,10 @@ static bool i915_pipe_enabled(struct drm_device *dev, enum pipe pipe)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32	dpll_reg;
 
+	/* On IVB, 3rd pipe shares PLL with another one */
+	if (pipe > 1)
+		return false;
+
 	if (HAS_PCH_SPLIT(dev))
 		dpll_reg = (pipe == PIPE_A) ? _PCH_DPLL_A : _PCH_DPLL_B;
 	else
@@ -762,13 +766,15 @@ static void i915_restore_display(struct drm_device *dev)
 	/* FIXME: restore TV & SDVO state */
 
 	/* only restore FBC info on the platform that supports FBC*/
-	intel_disable_fbc(dev);
 	if (I915_HAS_FBC(dev)) {
 		if (HAS_PCH_SPLIT(dev)) {
+			ironlake_disable_fbc(dev);
 			I915_WRITE(ILK_DPFC_CB_BASE, dev_priv->saveDPFC_CB_BASE);
 		} else if (IS_GM45(dev)) {
+			g4x_disable_fbc(dev);
 			I915_WRITE(DPFC_CB_BASE, dev_priv->saveDPFC_CB_BASE);
 		} else {
+			i8xx_disable_fbc(dev);
 			I915_WRITE(FBC_CFB_BASE, dev_priv->saveFBC_CFB_BASE);
 			I915_WRITE(FBC_LL_BASE, dev_priv->saveFBC_LL_BASE);
 			I915_WRITE(FBC_CONTROL2, dev_priv->saveFBC_CONTROL2);
@@ -873,18 +879,15 @@ int i915_restore_state(struct drm_device *dev)
 	}
 	mutex_unlock(&dev->struct_mutex);
 
-	if (drm_core_check_feature(dev, DRIVER_MODESET))
-		intel_init_clock_gating(dev);
+	intel_init_clock_gating(dev);
 
 	if (IS_IRONLAKE_M(dev)) {
 		ironlake_enable_drps(dev);
 		intel_init_emon(dev);
 	}
 
-	if (IS_GEN6(dev)) {
+	if (IS_GEN6(dev))
 		gen6_enable_rps(dev_priv);
-		gen6_update_ring_freq(dev_priv);
-	}
 
 	mutex_lock(&dev->struct_mutex);
 

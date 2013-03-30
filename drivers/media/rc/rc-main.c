@@ -735,7 +735,6 @@ static struct {
 	{ RC_TYPE_JVC,		"jvc"		},
 	{ RC_TYPE_SONY,		"sony"		},
 	{ RC_TYPE_RC5_SZ,	"rc-5-sz"	},
-	{ RC_TYPE_MCE_KBD,	"mce_kbd"	},
 	{ RC_TYPE_LIRC,		"lirc"		},
 	{ RC_TYPE_OTHER,	"other"		},
 };
@@ -773,9 +772,12 @@ static ssize_t show_protocols(struct device *device,
 	if (dev->driver_type == RC_DRIVER_SCANCODE) {
 		enabled = dev->rc_map.rc_type;
 		allowed = dev->allowed_protos;
-	} else {
+	} else if (dev->raw) {
 		enabled = dev->raw->enabled_protocols;
 		allowed = ir_raw_get_allowed_protocols();
+	} else {
+		mutex_unlock(&dev->lock);
+		return -ENODEV;
 	}
 
 	IR_dprintk(1, "allowed - 0x%llx, enabled - 0x%llx\n",
@@ -1100,14 +1102,13 @@ int rc_register_device(struct rc_dev *dev)
 		if (rc < 0)
 			goto out_input;
 	}
+	mutex_unlock(&dev->lock);
 
 	if (dev->change_protocol) {
 		rc = dev->change_protocol(dev, rc_map->rc_type);
 		if (rc < 0)
 			goto out_raw;
 	}
-
-	mutex_unlock(&dev->lock);
 
 	IR_dprintk(1, "Registered rc%ld (driver: %s, remote: %s, mode %s)\n",
 		   dev->devno,

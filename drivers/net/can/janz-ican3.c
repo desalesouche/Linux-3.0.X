@@ -22,7 +22,6 @@
 #include <linux/can/error.h>
 
 #include <linux/mfd/janz.h>
-#include <asm/io.h>
 
 /* the DPM has 64k of memory, organized into 256x 256 byte pages */
 #define DPM_NUM_PAGES		256
@@ -1250,7 +1249,6 @@ static irqreturn_t ican3_irq(int irq, void *dev_id)
  */
 static int ican3_reset_module(struct ican3_dev *mod)
 {
-	u8 val = 1 << mod->num;
 	unsigned long start;
 	u8 runold, runnew;
 
@@ -1264,8 +1262,7 @@ static int ican3_reset_module(struct ican3_dev *mod)
 	runold = ioread8(mod->dpm + TARGET_RUNNING);
 
 	/* reset the module */
-	iowrite8(val, &mod->ctrl->reset_assert);
-	iowrite8(val, &mod->ctrl->reset_deassert);
+	iowrite8(0x00, &mod->dpmctrl->hwreset);
 
 	/* wait until the module has finished resetting and is running */
 	start = jiffies;

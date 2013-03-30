@@ -1174,7 +1174,7 @@ struct ubi_scan_info *ubi_scan(struct ubi_device *ubi)
 
 	ech = kzalloc(ubi->ec_hdr_alsize, GFP_KERNEL);
 	if (!ech)
-		goto out_slab;
+		goto out_si;
 
 	vidh = ubi_zalloc_vid_hdr(ubi, GFP_KERNEL);
 	if (!vidh)
@@ -1235,8 +1235,6 @@ out_vidh:
 	ubi_free_vid_hdr(ubi, vidh);
 out_ech:
 	kfree(ech);
-out_slab:
-	kmem_cache_destroy(si->scan_leb_slab);
 out_si:
 	ubi_scan_destroy_si(si);
 	return ERR_PTR(err);
@@ -1325,7 +1323,9 @@ void ubi_scan_destroy_si(struct ubi_scan_info *si)
 		}
 	}
 
-	kmem_cache_destroy(si->scan_leb_slab);
+	if (si->scan_leb_slab)
+		kmem_cache_destroy(si->scan_leb_slab);
+
 	kfree(si);
 }
 
@@ -1347,7 +1347,7 @@ static int paranoid_check_si(struct ubi_device *ubi, struct ubi_scan_info *si)
 	struct ubi_scan_leb *seb, *last_seb;
 	uint8_t *buf;
 
-	if (!ubi->dbg->chk_gen)
+	if (!(ubi_chk_flags & UBI_CHK_GEN))
 		return 0;
 
 	/*

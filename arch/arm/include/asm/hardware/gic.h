@@ -41,12 +41,8 @@ void gic_secondary_init(unsigned int);
 void gic_cascade_irq(unsigned int gic_nr, unsigned int irq);
 void gic_raise_softirq(const struct cpumask *mask, unsigned int irq);
 void gic_enable_ppi(unsigned int);
-
-struct gic_chip_data {
-	unsigned int irq_offset;
-	void __iomem *dist_base;
-	void __iomem *cpu_base;
-};
+bool gic_is_spi_pending(unsigned int irq);
+void gic_clear_spi_pending(unsigned int irq);
 #endif
 
 #endif

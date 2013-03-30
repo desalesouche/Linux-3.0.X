@@ -107,6 +107,8 @@ static const struct neigh_ops ndisc_generic_ops = {
 	.error_report =		ndisc_error_report,
 	.output =		neigh_resolve_output,
 	.connected_output =	neigh_connected_output,
+	.hh_output =		dev_queue_xmit,
+	.queue_xmit =		dev_queue_xmit,
 };
 
 static const struct neigh_ops ndisc_hh_ops = {
@@ -115,13 +117,17 @@ static const struct neigh_ops ndisc_hh_ops = {
 	.error_report =		ndisc_error_report,
 	.output =		neigh_resolve_output,
 	.connected_output =	neigh_resolve_output,
+	.hh_output =		dev_queue_xmit,
+	.queue_xmit =		dev_queue_xmit,
 };
 
 
 static const struct neigh_ops ndisc_direct_ops = {
 	.family =		AF_INET6,
-	.output =		neigh_direct_output,
-	.connected_output =	neigh_direct_output,
+	.output =		dev_queue_xmit,
+	.connected_output =	dev_queue_xmit,
+	.hh_output =		dev_queue_xmit,
+	.queue_xmit =		dev_queue_xmit,
 };
 
 struct neigh_table nd_tbl = {
@@ -386,7 +392,7 @@ static int ndisc_constructor(struct neighbour *neigh)
 	if (!dev->header_ops) {
 		neigh->nud_state = NUD_NOARP;
 		neigh->ops = &ndisc_direct_ops;
-		neigh->output = neigh_direct_output;
+		neigh->output = neigh->ops->queue_xmit;
 	} else {
 		if (is_multicast) {
 			neigh->nud_state = NUD_NOARP;
@@ -609,7 +615,7 @@ static void ndisc_send_unsol_na(struct net_device *dev)
 {
 	struct inet6_dev *idev;
 	struct inet6_ifaddr *ifa;
-	struct in6_addr mcaddr;
+	struct in6_addr mcaddr = IN6ADDR_LINKLOCAL_ALLNODES_INIT;
 
 	idev = in6_dev_get(dev);
 	if (!idev)
@@ -617,7 +623,6 @@ static void ndisc_send_unsol_na(struct net_device *dev)
 
 	read_lock_bh(&idev->lock);
 	list_for_each_entry(ifa, &idev->addr_list, if_list) {
-		addrconf_addr_solict_mult(&ifa->addr, &mcaddr);
 		ndisc_send_na(dev, NULL, &mcaddr, &ifa->addr,
 			      /*router=*/ !!idev->cnf.forwarding,
 			      /*solicited=*/ false, /*override=*/ true,

@@ -205,6 +205,10 @@ struct xhci_op_regs {
 #define CMD_PM_INDEX	(1 << 11)
 /* bits 12:31 are reserved (and should be preserved on writes). */
 
+/* IMAN - Interrupt Management Register */
+#define IMAN_IE		(1 << 1)
+#define IMAN_IP		(1 << 0)
+
 /* USBSTS - USB status - status bitmasks */
 /* HC not running - set to 1 when run/stop bit is cleared. */
 #define STS_HALT	XHCI_STS_HALT
@@ -1066,17 +1070,13 @@ union xhci_trb {
 #define TRB_MFINDEX_WRAP	39
 /* TRB IDs 40-47 reserved, 48-63 is vendor-defined */
 
+#define TRB_TYPE_LINK_LE32(x)   (((x) & cpu_to_le32(TRB_TYPE_BITMASK)) == \
+		cpu_to_le32(TRB_TYPE(TRB_LINK)))
+
 /* Nec vendor-specific command completion event. */
 #define	TRB_NEC_CMD_COMP	48
 /* Get NEC firmware revision. */
 #define	TRB_NEC_GET_FW		49
-
-#define TRB_TYPE_LINK(x)	(((x) & TRB_TYPE_BITMASK) == TRB_TYPE(TRB_LINK))
-/* Above, but for __le32 types -- can avoid work by swapping constants: */
-#define TRB_TYPE_LINK_LE32(x)	(((x) & cpu_to_le32(TRB_TYPE_BITMASK)) == \
-				 cpu_to_le32(TRB_TYPE(TRB_LINK)))
-#define TRB_TYPE_NOOP_LE32(x)	(((x) & cpu_to_le32(TRB_TYPE_BITMASK)) == \
-				 cpu_to_le32(TRB_TYPE(TRB_TR_NOOP)))
 
 #define NEC_FW_MINOR(p)		(((p) >> 0) & 0xff)
 #define NEC_FW_MAJOR(p)		(((p) >> 8) & 0xff)
@@ -1112,6 +1112,16 @@ struct xhci_td {
 	struct xhci_segment	*start_seg;
 	union xhci_trb		*first_trb;
 	union xhci_trb		*last_trb;
+};
+
+/* xHCI command default timeout value */
+#define XHCI_CMD_DEFAULT_TIMEOUT       (5 * HZ)
+
+/* command descriptor */
+struct xhci_cd {
+	struct list_head	cancel_cmd_list;
+	struct xhci_command	*command;
+	union xhci_trb		*cmd_trb;
 };
 
 struct xhci_dequeue_state {
@@ -1255,6 +1265,11 @@ struct xhci_hcd {
 	/* data structures */
 	struct xhci_device_context_array *dcbaa;
 	struct xhci_ring	*cmd_ring;
+	unsigned int            cmd_ring_state;
+#define CMD_RING_STATE_RUNNING         (1 << 0)
+#define CMD_RING_STATE_ABORTED         (1 << 1)
+#define CMD_RING_STATE_STOPPED         (1 << 2)
+	struct list_head        cancel_cmd_list;
 	unsigned int		cmd_ring_reserved_trbs;
 	struct xhci_ring	*event_ring;
 	struct xhci_erst	erst;
@@ -1318,6 +1333,8 @@ struct xhci_hcd {
 #define XHCI_BROKEN_MSI		(1 << 6)
 #define XHCI_RESET_ON_RESUME	(1 << 7)
 #define XHCI_AMD_0x96_HOST	(1 << 9)
+#define XHCI_TRUST_TX_LENGTH	(1 << 10)
+#define XHCI_SPURIOUS_REBOOT	(1 << 13)
 	unsigned int		num_active_eps;
 	unsigned int		limit_active_eps;
 	/* There are two roothubs to keep track of bus suspend info for */
@@ -1486,6 +1503,8 @@ void xhci_unregister_pci(void);
 #endif
 
 /* xHCI host controller glue */
+int handshake(struct xhci_hcd *xhci, void __iomem *ptr,
+		u32 mask, u32 done, int usec);
 void xhci_quiesce(struct xhci_hcd *xhci);
 int xhci_halt(struct xhci_hcd *xhci);
 int xhci_reset(struct xhci_hcd *xhci);
@@ -1568,6 +1587,8 @@ void xhci_queue_config_ep_quirk(struct xhci_hcd *xhci,
 		unsigned int slot_id, unsigned int ep_index,
 		struct xhci_dequeue_state *deq_state);
 void xhci_stop_endpoint_command_watchdog(unsigned long arg);
+int xhci_cancel_cmd(struct xhci_hcd *xhci, struct xhci_command *command,
+		union xhci_trb *cmd_trb);
 void xhci_ring_ep_doorbell(struct xhci_hcd *xhci, unsigned int slot_id,
 		unsigned int ep_index, unsigned int stream_id);
 

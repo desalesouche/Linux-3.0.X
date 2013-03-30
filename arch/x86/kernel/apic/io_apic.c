@@ -1295,16 +1295,6 @@ static int setup_ioapic_entry(int apic_id, int irq,
 		 * irq handler will do the explicit EOI to the io-apic.
 		 */
 		ir_entry->vector = pin;
-
-		apic_printk(APIC_VERBOSE, KERN_DEBUG "IOAPIC[%d]: "
-			"Set IRTE entry (P:%d FPD:%d Dst_Mode:%d "
-			"Redir_hint:%d Trig_Mode:%d Dlvry_Mode:%X "
-			"Avail:%X Vector:%02X Dest:%08X "
-			"SID:%04X SQ:%X SVT:%X)\n",
-			apic_id, irte.present, irte.fpd, irte.dst_mode,
-			irte.redir_hint, irte.trigger_mode, irte.dlvry_mode,
-			irte.avail, irte.vector, irte.dest_id,
-			irte.sid, irte.sq, irte.svt);
 	} else {
 		entry->delivery_mode = apic->irq_delivery_mode;
 		entry->dest_mode = apic->irq_dest_mode;
@@ -1347,9 +1337,9 @@ static void setup_ioapic_irq(int apic_id, int pin, unsigned int irq,
 
 	apic_printk(APIC_VERBOSE,KERN_DEBUG
 		    "IOAPIC[%d]: Set routing entry (%d-%d -> 0x%x -> "
-		    "IRQ %d Mode:%i Active:%i Dest:%d)\n",
+		    "IRQ %d Mode:%i Active:%i)\n",
 		    apic_id, mpc_ioapic_id(apic_id), pin, cfg->vector,
-		    irq, trigger, polarity, dest);
+		    irq, trigger, polarity);
 
 
 	if (setup_ioapic_entry(mpc_ioapic_id(apic_id), irq, &entry,
@@ -1532,12 +1522,10 @@ __apicdebuginit(void) print_IO_APIC(void)
 	printk(KERN_DEBUG ".......    : LTS          : %X\n", reg_00.bits.LTS);
 
 	printk(KERN_DEBUG ".... register #01: %08X\n", *(int *)&reg_01);
-	printk(KERN_DEBUG ".......     : max redirection entries: %02X\n",
-		reg_01.bits.entries);
+	printk(KERN_DEBUG ".......     : max redirection entries: %04X\n", reg_01.bits.entries);
 
 	printk(KERN_DEBUG ".......     : PRQ implemented: %X\n", reg_01.bits.PRQ);
-	printk(KERN_DEBUG ".......     : IO APIC version: %02X\n",
-		reg_01.bits.version);
+	printk(KERN_DEBUG ".......     : IO APIC version: %04X\n", reg_01.bits.version);
 
 	/*
 	 * Some Intel chipsets with IO APIC VERSION of 0x1? don't have reg_02,
@@ -1562,60 +1550,31 @@ __apicdebuginit(void) print_IO_APIC(void)
 
 	printk(KERN_DEBUG ".... IRQ redirection table:\n");
 
-	if (intr_remapping_enabled) {
-		printk(KERN_DEBUG " NR Indx Fmt Mask Trig IRR"
-			" Pol Stat Indx2 Zero Vect:\n");
-	} else {
-		printk(KERN_DEBUG " NR Dst Mask Trig IRR Pol"
-			" Stat Dmod Deli Vect:\n");
-	}
+	printk(KERN_DEBUG " NR Dst Mask Trig IRR Pol"
+			  " Stat Dmod Deli Vect:\n");
 
 	for (i = 0; i <= reg_01.bits.entries; i++) {
-		if (intr_remapping_enabled) {
-			struct IO_APIC_route_entry entry;
-			struct IR_IO_APIC_route_entry *ir_entry;
+		struct IO_APIC_route_entry entry;
 
-			entry = ioapic_read_entry(apic, i);
-			ir_entry = (struct IR_IO_APIC_route_entry *) &entry;
-			printk(KERN_DEBUG " %02x %04X ",
-				i,
-				ir_entry->index
-			);
-			printk("%1d   %1d    %1d    %1d   %1d   "
-				"%1d    %1d     %X    %02X\n",
-				ir_entry->format,
-				ir_entry->mask,
-				ir_entry->trigger,
-				ir_entry->irr,
-				ir_entry->polarity,
-				ir_entry->delivery_status,
-				ir_entry->index2,
-				ir_entry->zero,
-				ir_entry->vector
-			);
-		} else {
-			struct IO_APIC_route_entry entry;
+		entry = ioapic_read_entry(apic, i);
 
-			entry = ioapic_read_entry(apic, i);
-			printk(KERN_DEBUG " %02x %02X  ",
-				i,
-				entry.dest
-			);
-			printk("%1d    %1d    %1d   %1d   %1d    "
-				"%1d    %1d    %02X\n",
-				entry.mask,
-				entry.trigger,
-				entry.irr,
-				entry.polarity,
-				entry.delivery_status,
-				entry.dest_mode,
-				entry.delivery_mode,
-				entry.vector
-			);
-		}
+		printk(KERN_DEBUG " %02x %03X ",
+			i,
+			entry.dest
+		);
+
+		printk("%1d    %1d    %1d   %1d   %1d    %1d    %1d    %02X\n",
+			entry.mask,
+			entry.trigger,
+			entry.irr,
+			entry.polarity,
+			entry.delivery_status,
+			entry.dest_mode,
+			entry.delivery_mode,
+			entry.vector
+		);
 	}
 	}
-
 	printk(KERN_DEBUG "IRQ to pin mappings:\n");
 	for_each_active_irq(irq) {
 		struct irq_pin_list *entry;
@@ -1833,7 +1792,7 @@ __apicdebuginit(int) print_ICs(void)
 	return 0;
 }
 
-late_initcall(print_ICs);
+fs_initcall(print_ICs);
 
 
 /* Where if anywhere is the i8259 connect in external int mode */
@@ -3968,15 +3927,33 @@ int mp_find_ioapic_pin(int ioapic, u32 gsi)
 static __init int bad_ioapic(unsigned long address)
 {
 	if (nr_ioapics >= MAX_IO_APICS) {
-		printk(KERN_WARNING "WARNING: Max # of I/O APICs (%d) exceeded "
-		       "(found %d), skipping\n", MAX_IO_APICS, nr_ioapics);
+		pr_warn("WARNING: Max # of I/O APICs (%d) exceeded (found %d), skipping\n",
+			MAX_IO_APICS, nr_ioapics);
 		return 1;
 	}
 	if (!address) {
-		printk(KERN_WARNING "WARNING: Bogus (zero) I/O APIC address"
-		       " found in table, skipping!\n");
+		pr_warn("WARNING: Bogus (zero) I/O APIC address found in table, skipping!\n");
 		return 1;
 	}
+	return 0;
+}
+
+static __init int bad_ioapic_register(int idx)
+{
+	union IO_APIC_reg_00 reg_00;
+	union IO_APIC_reg_01 reg_01;
+	union IO_APIC_reg_02 reg_02;
+
+	reg_00.raw = io_apic_read(idx, 0);
+	reg_01.raw = io_apic_read(idx, 1);
+	reg_02.raw = io_apic_read(idx, 2);
+
+	if (reg_00.raw == -1 && reg_01.raw == -1 && reg_02.raw == -1) {
+		pr_warn("I/O APIC 0x%x registers return all ones, skipping!\n",
+			mpc_ioapic_addr(idx));
+		return 1;
+	}
+
 	return 0;
 }
 
@@ -3996,6 +3973,12 @@ void __init mp_register_ioapic(int id, u32 address, u32 gsi_base)
 	ioapics[idx].mp_config.apicaddr = address;
 
 	set_fixmap_nocache(FIX_IO_APIC_BASE_0 + idx, address);
+
+	if (bad_ioapic_register(idx)) {
+		clear_fixmap(FIX_IO_APIC_BASE_0 + idx);
+		return;
+	}
+
 	ioapics[idx].mp_config.apicid = io_apic_unique_id(id);
 	ioapics[idx].mp_config.apicver = io_apic_get_version(idx);
 
@@ -4016,10 +3999,10 @@ void __init mp_register_ioapic(int id, u32 address, u32 gsi_base)
 	if (gsi_cfg->gsi_end >= gsi_top)
 		gsi_top = gsi_cfg->gsi_end + 1;
 
-	printk(KERN_INFO "IOAPIC[%d]: apic_id %d, version %d, address 0x%x, "
-	       "GSI %d-%d\n", idx, mpc_ioapic_id(idx),
-	       mpc_ioapic_ver(idx), mpc_ioapic_addr(idx),
-	       gsi_cfg->gsi_base, gsi_cfg->gsi_end);
+	pr_info("IOAPIC[%d]: apic_id %d, version %d, address 0x%x, GSI %d-%d\n",
+		idx, mpc_ioapic_id(idx),
+		mpc_ioapic_ver(idx), mpc_ioapic_addr(idx),
+		gsi_cfg->gsi_base, gsi_cfg->gsi_end);
 
 	nr_ioapics++;
 }

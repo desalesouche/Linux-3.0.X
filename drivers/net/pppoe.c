@@ -576,7 +576,7 @@ static int pppoe_release(struct socket *sock)
 
 	po = pppox_sk(sk);
 
-	if (sk->sk_state & (PPPOX_CONNECTED | PPPOX_BOUND)) {
+	if (sk->sk_state & (PPPOX_CONNECTED | PPPOX_BOUND | PPPOX_ZOMBIE)) {
 		dev_put(po->pppoe_dev);
 		po->pppoe_dev = NULL;
 	}
@@ -992,6 +992,9 @@ static int pppoe_recvmsg(struct kiocb *iocb, struct socket *sock,
 		error = skb_copy_datagram_iovec(skb, 0, m->msg_iov, total_len);
 		if (error == 0)
 			error = total_len;
+	} else {
+		printk(KERN_ERR "[PPP] skb is NULL in %s!\n", __func__);
+		return false;
 	}
 
 	kfree_skb(skb);

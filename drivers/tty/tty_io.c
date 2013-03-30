@@ -94,7 +94,6 @@
 #include <linux/delay.h>
 #include <linux/seq_file.h>
 #include <linux/serial.h>
-#include <linux/ratelimit.h>
 
 #include <linux/uaccess.h>
 #include <asm/system.h>
@@ -105,6 +104,10 @@
 
 #include <linux/kmod.h>
 #include <linux/nsproxy.h>
+
+#if defined(CONFIG_MSM_SMD0_WQ)
+struct workqueue_struct *tty_wq;
+#endif
 
 #undef TTY_DEBUG_HANGUP
 
@@ -1439,7 +1442,8 @@ err_module_put:
 
 	/* call the tty release_tty routine to clean out this slot */
 err_release_tty:
-	printk_ratelimited(KERN_INFO "tty_init_dev: ldisc open failed, "
+	if (printk_ratelimit())
+		printk(KERN_INFO "tty_init_dev: ldisc open failed, "
 				 "clearing slot %d\n", idx);
 	release_tty(tty, idx);
 	return ERR_PTR(retval);
@@ -2538,8 +2542,11 @@ static int tty_tiocmset(struct tty_struct *tty, unsigned int cmd,
 		clear = ~val;
 		break;
 	}
-	set &= TIOCM_DTR|TIOCM_RTS|TIOCM_OUT1|TIOCM_OUT2|TIOCM_LOOP;
-	clear &= TIOCM_DTR|TIOCM_RTS|TIOCM_OUT1|TIOCM_OUT2|TIOCM_LOOP;
+
+	set &= TIOCM_DTR|TIOCM_RTS|TIOCM_OUT1|TIOCM_OUT2|TIOCM_LOOP|TIOCM_CD|
+		TIOCM_RI|TIOCM_DSR|TIOCM_CTS;
+	clear &= TIOCM_DTR|TIOCM_RTS|TIOCM_OUT1|TIOCM_OUT2|TIOCM_LOOP|TIOCM_CD|
+		TIOCM_RI|TIOCM_DSR|TIOCM_CTS;
 	return tty->ops->tiocmset(tty, set, clear);
 }
 
@@ -3348,6 +3355,11 @@ int __init tty_init(void)
 		consdev = NULL;
 	else
 		WARN_ON(device_create_file(consdev, &dev_attr_active) < 0);
+
+#if defined(CONFIG_MSM_SMD0_WQ)
+	tty_wq = create_workqueue("tty_smd0");
+	printk(KERN_DEBUG "[TTY_IO] create tty_wq for smd0\n");
+#endif
 
 #ifdef CONFIG_VT
 	vty_init(&console_fops);

@@ -13,7 +13,7 @@
 #include <linux/init.h>
 #include <linux/fs.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * The default fd array needs to be at least BITS_PER_LONG,
@@ -58,8 +58,13 @@ struct files_struct {
 	struct file __rcu * fd_array[NR_OPEN_DEFAULT];
 };
 
+#ifdef CONFIG_DEBUG_FDLEAK
+extern void fd_num_check(struct files_struct *files, unsigned int fd);
+#endif
+
 #define rcu_dereference_check_fdtable(files, fdtfd) \
 	(rcu_dereference_check((fdtfd), \
+			       rcu_read_lock_held() || \
 			       lockdep_is_held(&(files)->file_lock) || \
 			       atomic_read(&(files)->count) == 1 || \
 			       rcu_my_thread_group_empty()))

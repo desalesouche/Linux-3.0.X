@@ -5,6 +5,24 @@
  * 'tty.h' defines some structures used by tty_io.c and some defines.
  */
 
+#ifdef __KERNEL__
+#include <linux/fs.h>
+#include <linux/major.h>
+#include <linux/termios.h>
+#include <linux/workqueue.h>
+#include <linux/tty_driver.h>
+#include <linux/tty_ldisc.h>
+#include <linux/mutex.h>
+
+#include <asm/system.h>
+
+
+/*
+ * (Note: the *_driver.minor_start values 1, 64, 128, 192 are
+ * hardcoded at present.)
+ */
+#define NR_UNIX98_PTY_DEFAULT	4096      /* Default maximum for Unix98 ptys */
+#define NR_UNIX98_PTY_MAX	(1 << MINORBITS) /* Absolute limit */
 #define NR_LDISCS		30
 
 /* line disciplines */
@@ -34,25 +52,7 @@
 #define N_TI_WL		22	/* for TI's WL BT, FM, GPS combo chips */
 #define N_TRACESINK	23	/* Trace data routing for MIPI P1149.7 */
 #define N_TRACEROUTER	24	/* Trace data routing for MIPI P1149.7 */
-
-#ifdef __KERNEL__
-#include <linux/fs.h>
-#include <linux/major.h>
-#include <linux/termios.h>
-#include <linux/workqueue.h>
-#include <linux/tty_driver.h>
-#include <linux/tty_ldisc.h>
-#include <linux/mutex.h>
-
-#include <asm/system.h>
-
-
-/*
- * (Note: the *_driver.minor_start values 1, 64, 128, 192 are
- * hardcoded at present.)
- */
-#define NR_UNIX98_PTY_DEFAULT	4096      /* Default maximum for Unix98 ptys */
-#define NR_UNIX98_PTY_MAX	(1 << MINORBITS) /* Absolute limit */
+#define N_TS2710        25      /* 3GPP TS 27.010 MUX over UART */
 
 /*
  * This character is the same as _POSIX_VDISABLE: it cannot be used as
@@ -60,6 +60,10 @@
  * isn't in use (eg VINTR has no character etc)
  */
 #define __DISABLED_CHAR '\0'
+
+#if defined(CONFIG_MSM_SMD0_WQ)
+extern struct workqueue_struct *tty_wq;
+#endif
 
 struct tty_buffer {
 	struct tty_buffer *next;
@@ -331,6 +335,11 @@ struct tty_struct {
 	/* If the tty has a pending do_SAK, queue it here - akpm */
 	struct work_struct SAK_work;
 	struct tty_port *port;
+	/* spinklock for changing receive_room */
+	spinlock_t rcv_lock;
+	int is_rcvlock;
+	struct mutex rcv_room_lock;
+
 };
 
 /* Each of a tty's open files has private_data pointing to tty_file_private */

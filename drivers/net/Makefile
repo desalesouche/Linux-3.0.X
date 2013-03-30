@@ -59,6 +59,7 @@ obj-$(CONFIG_HAPPYMEAL) += sunhme.o
 obj-$(CONFIG_SUNLANCE) += sunlance.o
 obj-$(CONFIG_SUNQE) += sunqe.o
 obj-$(CONFIG_SUNBMAC) += sunbmac.o
+obj-$(CONFIG_MYRI_SBUS) += myri_sbus.o
 obj-$(CONFIG_SUNGEM) += sungem.o sungem_phy.o
 obj-$(CONFIG_CASSINI) += cassini.o
 obj-$(CONFIG_SUNVNET) += sunvnet.o
@@ -107,6 +108,7 @@ obj-$(CONFIG_ADAPTEC_STARFIRE) += starfire.o
 obj-$(CONFIG_RIONET) += rionet.o
 obj-$(CONFIG_SH_ETH) += sh_eth.o
 obj-$(CONFIG_STMMAC_ETH) += stmmac/
+obj-$(CONFIG_KINETO_GAN) += kineto_gan.o
 
 #
 # end link order section
@@ -127,6 +129,7 @@ obj-$(CONFIG_FEC_MPC52xx) += fec_mpc52xx.o
 ifeq ($(CONFIG_FEC_MPC52xx_MDIO),y)
 	obj-$(CONFIG_FEC_MPC52xx) += fec_mpc52xx_phy.o
 endif
+obj-$(CONFIG_68360_ENET) += 68360enet.o
 obj-$(CONFIG_WD80x3) += wd.o 8390.o
 obj-$(CONFIG_EL2) += 3c503.o 8390p.o
 obj-$(CONFIG_NE2000) += ne.o 8390p.o
@@ -146,7 +149,6 @@ obj-$(CONFIG_FORCEDETH) += forcedeth.o
 obj-$(CONFIG_NE_H8300) += ne-h8300.o
 obj-$(CONFIG_AX88796) += ax88796.o
 obj-$(CONFIG_BCM63XX_ENET) += bcm63xx_enet.o
-obj-$(CONFIG_FTGMAC100) += ftgmac100.o
 obj-$(CONFIG_FTMAC100) += ftmac100.o
 
 obj-$(CONFIG_TSI108_ETH) += tsi108_eth.o
@@ -167,6 +169,8 @@ obj-$(CONFIG_PPP_MPPE) += ppp_mppe.o
 obj-$(CONFIG_PPPOE) += pppox.o pppoe.o
 obj-$(CONFIG_PPPOL2TP) += pppox.o
 obj-$(CONFIG_PPTP) += pppox.o pptp.o
+obj-$(CONFIG_PPPOLAC) += pppox.o pppolac.o
+obj-$(CONFIG_PPPOPNS) += pppox.o pppopns.o
 
 obj-$(CONFIG_SLIP) += slip.o
 obj-$(CONFIG_SLHC) += slhc.o
@@ -266,6 +270,7 @@ obj-$(CONFIG_XTENSA_XT2000_SONIC) += xtsonic.o
 obj-$(CONFIG_DNET) += dnet.o
 obj-$(CONFIG_MACB) += macb.o
 obj-$(CONFIG_S6GMAC) += s6gmac.o
+obj-$(CONFIG_QFEC) += qfec.o
 
 obj-$(CONFIG_ARM) += arm/
 obj-$(CONFIG_DEV_APPLETALK) += appletalk/
@@ -296,6 +301,22 @@ obj-$(CONFIG_NETCONSOLE) += netconsole.o
 obj-$(CONFIG_FS_ENET) += fs_enet/
 
 obj-$(CONFIG_NETXEN_NIC) += netxen/
+
+#
+# RMNET
+#
+ifdef CONFIG_ARCH_MSM7X30_SMD
+obj-$(CONFIG_ARCH_MSM7X30_SMD) += 7x30-smd/
+else # Else CONFIG_ARCH_MSM7X30_SMD
+obj-$(CONFIG_MSM_RMNET) += msm_rmnet.o
+ifdef CONFIG_ARCH_MSM8X60
+obj-$(CONFIG_ARCH_MSM8X60_LTE) += 8x60-lte/
+else
+obj-$(CONFIG_MSM_RMNET_SDIO) += msm_rmnet_sdio.o
+endif
+endif # End CONFIG_ARCH_MSM7X30_LTE
+obj-$(CONFIG_MSM_RMNET_BAM) += msm_rmnet_bam.o
+
 obj-$(CONFIG_NIU) += niu.o
 obj-$(CONFIG_VIRTIO_NET) += virtio_net.o
 obj-$(CONFIG_SFC) += sfc/

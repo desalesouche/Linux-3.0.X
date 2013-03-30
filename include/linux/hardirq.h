@@ -93,7 +93,7 @@
  */
 #define in_nmi()	(preempt_count() & NMI_MASK)
 
-#if defined(CONFIG_PREEMPT_COUNT)
+#if defined(CONFIG_PREEMPT)
 # define PREEMPT_CHECK_OFFSET 1
 #else
 # define PREEMPT_CHECK_OFFSET 0
@@ -115,7 +115,7 @@
 #define in_atomic_preempt_off() \
 		((preempt_count() & ~PREEMPT_ACTIVE) != PREEMPT_CHECK_OFFSET)
 
-#ifdef CONFIG_PREEMPT_COUNT
+#ifdef CONFIG_PREEMPT
 # define preemptible()	(preempt_count() == 0 && !irqs_disabled())
 # define IRQ_EXIT_OFFSET (HARDIRQ_OFFSET-1)
 #else
@@ -139,7 +139,13 @@ static inline void account_system_vtime(struct task_struct *tsk)
 extern void account_system_vtime(struct task_struct *tsk);
 #endif
 
-#if defined(CONFIG_NO_HZ)
+#if defined(CONFIG_JRCU)
+extern int rcu_nmi_seen;
+# define rcu_irq_enter() do { } while (0)
+# define rcu_irq_exit() do { } while (0)
+# define rcu_nmi_enter() do { rcu_nmi_seen = 1; } while (0)
+# define rcu_nmi_exit() do { } while (0)
+#elif defined(CONFIG_NO_HZ)
 #if defined(CONFIG_TINY_RCU) || defined(CONFIG_TINY_PREEMPT_RCU)
 extern void rcu_enter_nohz(void);
 extern void rcu_exit_nohz(void);
