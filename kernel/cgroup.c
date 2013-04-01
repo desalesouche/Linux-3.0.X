@@ -359,20 +359,12 @@ static void __put_css_set(struct css_set *cg, int taskexit)
 		struct cgroup *cgrp = link->cgrp;
 		list_del(&link->cg_link_list);
 		list_del(&link->cgrp_link_list);
-
-		/*
-		 * We may not be holding cgroup_mutex, and if cgrp->count is
-		 * dropped to 0 the cgroup can be destroyed at any time, hence
-		 * rcu_read_lock is used to keep it alive.
-		 */
-		rcu_read_lock();
 		if (atomic_dec_and_test(&cgrp->count) &&
 		    notify_on_release(cgrp)) {
 			if (taskexit)
 				set_bit(CGRP_RELEASABLE, &cgrp->flags);
 			check_for_release(cgrp);
 		}
-		rcu_read_unlock();
 
 		kfree(link);
 	}
@@ -1808,8 +1800,9 @@ static int cgroup_task_migrate(struct cgroup *cgrp, struct cgroup *oldcgrp,
 	 * trading it for newcg is protected by cgroup_mutex, we're safe to drop
 	 * it here; it will be freed under RCU.
 	 */
-	set_bit(CGRP_RELEASABLE, &oldcgrp->flags);
 	put_css_set(oldcg);
+
+	set_bit(CGRP_RELEASABLE, &oldcgrp->flags);
 	return 0;
 }
 
@@ -2638,7 +2631,9 @@ static int cgroup_create_dir(struct cgroup *cgrp, struct dentry *dentry,
 		dentry->d_fsdata = cgrp;
 		inc_nlink(parent->d_inode);
 		rcu_assign_pointer(cgrp->dentry, dentry);
+		dget(dentry);
 	}
+	dput(dentry);
 
 	return error;
 }
